@@ -39,7 +39,7 @@ def run_comparison(
     M_res=1.0e10,
     z0=0.0,
     z_max=1.0,
-    dz=0.2,
+    dz=0.01,
     n_trees=20_000,
     seed=42,
 ):
@@ -140,7 +140,7 @@ def main():
     parser.add_argument("--M-res", type=float, default=1.0e10, help="Msun/h")
     parser.add_argument("--z0", type=float, default=0.0)
     parser.add_argument("--z-max", type=float, default=1.0)
-    parser.add_argument("--dz", type=float, default=0.2)
+    parser.add_argument("--dz", type=float, default=0.01)
     parser.add_argument("--n-trees", type=int, default=20_000)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument(

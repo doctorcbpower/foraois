@@ -92,8 +92,14 @@ def main():
     M0 = 1.0e12  # Msun/h — halo mass at z=0
     z0 = 0.0
     z_max = 15.0
-    M_res = 1.0e4  # Msun/h — mass resolution
-    dz = 0.1
+    # M_res=1e4 with dz=0.1 previously gave Nupper (expected splits per
+    # step, see foraois.diagnostics.expected_splits_per_step) in the
+    # millions -- PCH08's single-split-per-step architecture targets
+    # Nupper~0.1; an 8-order-of-magnitude M0/M_res ratio at this dz was
+    # never a valid regime for it. M_res=1e10, dz=0.005 keeps Nupper < 0.11
+    # across the whole z0..z_max range for M0=1e12.
+    M_res = 1.0e10  # Msun/h — mass resolution
+    dz = 0.005
     N = args.n_trees
 
     # ------------------------------------------------------------------
@@ -174,7 +180,7 @@ def main():
             split_events,
             z_steps,
             M_res=M_res,
-            N_show=150,
+            n_show=150,
             file_name="forest_summary_numpy",
         )
 
@@ -254,7 +260,7 @@ def main():
             split_events_sample,
             z_steps,
             M_res=M_res,
-            N_show=150,
+            n_show=150,
             file_name="forest_summary_numba",
         )
 
