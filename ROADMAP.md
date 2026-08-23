@@ -39,7 +39,3 @@ Known gaps and open questions, in no particular order.
   for the flat-barrier models (competitive with PCH08's own numpy backend),
   but there's no JIT-compiled/parallel backend analogous to
   `PCHMergerTree.build_forest_numba`.
-
-- **CLI coverage.** `main.py`'s command-line interface currently only drives
-  `PCHMergerTree`. `ZhangHuiMergerTree` and the constrained-tree backend are
-  Python-API-only.

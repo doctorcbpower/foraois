@@ -3,7 +3,7 @@ import time
 
 import numpy as np
 
-from foraois import PCHMergerTree, cosmo_utils
+from foraois import PCHMergerTree, ZhangHuiMergerTree, build_constrained_tree, cosmo_utils
 from foraois.utils import io, plot
 
 
@@ -24,18 +24,48 @@ def main():
         help="Number of trees to generate (default: 1000)",
     )
     parser.add_argument(
+        "--algorithm",
+        dest="algorithm",
+        type=str,
+        default="pch08",
+        choices=["pch08", "zhang-hui", "constrained"],
+        help=(
+            "Tree-building algorithm: "
+            '"pch08" (Parkinson, Cole & Helly 2008 fitted rate, default), '
+            '"zhang-hui" (exact Zhang & Hui 2006 rate, barrier-agnostic), '
+            '"constrained" (Nadler et al. 2023 Brownian-bridge-constrained '
+            "branch guaranteed to reach --M1 at --z1)"
+        ),
+    )
+    parser.add_argument(
         "--backend",
         dest="backend",
         type=str,
         default="numpy",
         choices=["serial", "numpy", "numba"],
         help=(
-            "Tree-building backend: "
-            '"serial" (original single-tree loop, for testing), '
+            "Tree-building backend (ignored for --algorithm constrained, which "
+            "has no vectorised backend yet -- see ROADMAP.md): "
+            '"serial" (single-tree loop, for testing), '
             '"numpy" (vectorised, no extra deps, default), '
             '"numba" (JIT + parallel, fastest for large N, needs '
-            "`pip install foraois[numba]`)"
+            "`pip install foraois[numba]`; not available for --algorithm zhang-hui, "
+            "which has no build_forest_numba -- see ROADMAP.md)"
         ),
+    )
+    parser.add_argument(
+        "--M1",
+        dest="M1",
+        type=float,
+        default=1.0e11,
+        help="Constraint mass at --z1, Msun/h (only used for --algorithm constrained; default: 1e11)",
+    )
+    parser.add_argument(
+        "--z1",
+        dest="z1",
+        type=float,
+        default=4.0,
+        help="Constraint redshift (only used for --algorithm constrained; default: 4.0)",
     )
     args = parser.parse_args()
 
@@ -78,38 +108,130 @@ def main():
     print(f"Critical collapse threshold:{delta_col}")
 
     # ------------------------------------------------------------------
-    # Tree generator
-    # PCHMergerTree.__init__ calls _prepare_sigma_grid once, which builds
-    # the fast scipy interpolants for sigma(M) and d log sigma / d log M.
-    # ------------------------------------------------------------------
-    t0 = time.perf_counter()
-    tree_generator = PCHMergerTree(cosmology_data, run_params)
-    print(f"PCHMergerTree initialised (sigma grid) in {time.perf_counter() - t0:.2f} s")
-
-    # ------------------------------------------------------------------
     # Tree parameters
     # ------------------------------------------------------------------
     M0 = 1.0e12  # Msun/h — halo mass at z=0
     z0 = 0.0
-    z_max = 15.0
     # M_res=1e4 with dz=0.1 previously gave Nupper (expected splits per
     # step, see foraois.diagnostics.expected_splits_per_step) in the
     # millions -- PCH08's single-split-per-step architecture targets
     # Nupper~0.1; an 8-order-of-magnitude M0/M_res ratio at this dz was
     # never a valid regime for it. M_res=1e10, dz=0.005 keeps Nupper < 0.11
-    # across the whole z0..z_max range for M0=1e12.
+    # across the whole z0..z_max=15 range for M0=1e12 -- used for PCH08
+    # (any backend) and ZhangHuiMergerTree.build_forest_numpy (both cheap:
+    # PCH08's rate is a closed-form-per-step formula, and build_forest_numpy
+    # uses the closed-form Levy sampler for flat barriers, not a numerical
+    # solve -- see zhang_hui_trees.py's own docstring).
     M_res = 1.0e10  # Msun/h — mass resolution
-    dz = 0.005
     N = args.n_trees
+    dm_model = run_params["Code"].get("dm_model", "cdm")
+
+    algorithm = args.algorithm
+    backend = args.backend
+    print(f"\nBuilding {N:,} trees with algorithm='{algorithm}', backend='{backend}' ...")
+
+    # ZhangHuiMergerTree.build_tree (unlike build_forest_numpy) calls
+    # first_crossing_step's O(N_grid^2)-per-step numerical solve at every
+    # step -- genuinely expensive per tree, unlike every other path here.
+    # This affects both --algorithm zhang-hui --backend serial directly,
+    # and --algorithm constrained's unconstrained continuation beyond z1
+    # (build_constrained_tree grafts a ZhangHuiMergerTree.build_tree call
+    # onto the constrained branch -- see zhang_hui_constrained_trees.py).
+    # A coarser dz/z_max/N_grid than PCH08's above keeps a handful of
+    # trees tractable; this is not a backend for bulk (N large) generation
+    # the way build_forest_numpy is -- warned about explicitly below.
+    zh_build_tree_z_max = 8.0
+    zh_build_tree_dz = 0.2
+    zh_build_tree_N_grid = 60
+
+    if algorithm == "zhang-hui" and backend == "serial" and N > 20:
+        print(
+            f"  Note: --algorithm zhang-hui --backend serial calls an O(N_grid^2) "
+            f"solve at every step -- building {N:,} trees this way will be slow. "
+            "Use --backend numpy for bulk generation (closed-form, no such cost)."
+        )
+    if algorithm == "constrained" and N > 20:
+        print(
+            f"  Note: --algorithm constrained has no vectorised backend yet (see "
+            f"ROADMAP.md) -- building {N:,} trees serially will be slow."
+        )
 
     # ------------------------------------------------------------------
-    # Run in the chosen backend
+    # Constrained trees (Nadler et al. 2023): a structurally different
+    # operation from PCH08/Zhang-Hui's build_tree/build_forest_numpy --
+    # build_constrained_tree grows one branch at a time (no vectorised
+    # forest backend exists yet, see ROADMAP.md), so this loops serially
+    # regardless of --backend.
     # ------------------------------------------------------------------
-    backend = args.backend
-    print(f"\nBuilding {N:,} trees with backend='{backend}' ...")
+    if algorithm == "constrained":
+        M1, z1 = args.M1, args.z1
+        z_max = zh_build_tree_z_max
+        # build_constrained_tree needs cosmology_data's sigma(M) grid, which
+        # PCHMergerTree/ZhangHuiMergerTree's own __init__ builds as a side
+        # effect (see their docstrings) -- neither is constructed on this
+        # path, so it must be built explicitly here instead.
+        cosmology_data._prepare_sigma_grid(pk_data)
+        if M1 >= M0:
+            raise ValueError(f"--M1={M1} must be < M0={M0}.")
+        if z1 <= z0 or z1 >= z_max:
+            raise ValueError(f"--z1={z1} must satisfy z0={z0} < z1 < z_max={z_max} (see --z1's own help).")
+
+        rng = np.random.default_rng()
+        t0 = time.perf_counter()
+        trees = [
+            build_constrained_tree(
+                M0,
+                z0,
+                M1,
+                z1,
+                z_max,
+                M_res,
+                cosmology_data,
+                model=dm_model,
+                rng=rng,
+                dz=zh_build_tree_dz,
+                N_grid=zh_build_tree_N_grid,
+            )
+            for _ in range(N)
+        ]
+        elapsed = time.perf_counter() - t0
+        print(f"Constrained (serial loop): {elapsed:.2f} s for {N:,} trees ({elapsed / N * 1e3:.2f} ms / tree)")
+        print(f"  each tree guaranteed to reach M1={M1:.3e} Msun/h at z1={z1:g}")
+
+        # Single-tree mass history (same tree-of-dicts shape build_tree
+        # uses, so the same plotting function works unchanged).
+        plot.plot_merger_history(trees[0], file_name="merger_history_constrained")
+        return
+
+    # ------------------------------------------------------------------
+    # PCH08 / Zhang-Hui: both satisfy the same TreeAlgorithm interface
+    # (build_tree/build_forest_numpy, identical signatures and return
+    # shapes -- see tree_algorithm.py), so the backend-dispatch logic
+    # below is shared between them. ZhangHuiMergerTree has no
+    # build_forest_numba (see ROADMAP.md) -- caught explicitly rather
+    # than left to an AttributeError.
+    # ------------------------------------------------------------------
+    if algorithm == "zhang-hui" and backend == "numba":
+        raise ValueError(
+            "--algorithm zhang-hui has no build_forest_numba backend yet "
+            "(see ROADMAP.md) -- use --backend serial or numpy instead."
+        )
+
+    # build_forest_numpy is cheap for both algorithms (closed-form for
+    # Zhang-Hui, see above) so z_max=15/dz=0.005 is fine there; only
+    # zhang-hui's *serial* build_tree needs the coarser parameters.
+    z_max = zh_build_tree_z_max if (algorithm == "zhang-hui" and backend == "serial") else 15.0
+    dz = zh_build_tree_dz if (algorithm == "zhang-hui" and backend == "serial") else 0.005
+
+    t0 = time.perf_counter()
+    if algorithm == "pch08":
+        tree_generator = PCHMergerTree(cosmology_data, run_params)
+    else:
+        tree_generator = ZhangHuiMergerTree(cosmology_data, run_params, model=dm_model, N_grid=zh_build_tree_N_grid)
+    print(f"{type(tree_generator).__name__} initialised (sigma grid) in {time.perf_counter() - t0:.2f} s")
 
     if backend == "serial":
-        # ---- Original serial loop (kept for regression testing) --------
+        # ---- Single-tree loop (kept for debugging/testing) --------------
         t0 = time.perf_counter()
         trees = []
         for _ in range(N):
@@ -118,7 +240,7 @@ def main():
         print(f"Serial:  {elapsed:.2f} s for {N:,} trees ({elapsed / N * 1e3:.2f} ms / tree)")
 
         # Single-tree mass history (list-of-dicts format from build_tree)
-        plot.plot_merger_history(trees[0], file_name="merger_history_serial")
+        plot.plot_merger_history(trees[0], file_name=f"merger_history_serial_{algorithm}")
 
     elif backend == "numpy":
         # ---- Vectorised NumPy (no Numba) --------------------------------
@@ -144,7 +266,7 @@ def main():
             z_steps,
             n_show=200000,
             M_res=M_res,
-            file_name="mass_tracks_numpy",
+            file_name=f"mass_tracks_numpy_{algorithm}",
         )
 
         # 2. Merger rate dN/dz per tree
@@ -152,7 +274,7 @@ def main():
             split_events,
             z_steps,
             N_trees=N,
-            file_name="merger_rate_numpy",
+            file_name=f"merger_rate_numpy_{algorithm}",
         )
 
         # 3. Progenitor mass function at several redshifts
@@ -161,7 +283,7 @@ def main():
             z_steps,
             z_targets=[0.5, 1.0, 2.0, 3.0],
             M_res=M_res,
-            file_name="mass_function_numpy",
+            file_name=f"mass_function_numpy_{algorithm}",
         )
 
         # 4. Branching diagram for tree 0
@@ -171,7 +293,7 @@ def main():
             tree_idx=0,
             M_res=M_res,
             split_events=split_events,
-            file_name="tree_graph_numpy",
+            file_name=f"tree_graph_numpy_{algorithm}",
         )
 
         # 5. All-in-one 2×2 summary panel
@@ -181,11 +303,11 @@ def main():
             z_steps,
             M_res=M_res,
             n_show=150,
-            file_name="forest_summary_numpy",
+            file_name=f"forest_summary_numpy_{algorithm}",
         )
 
     elif backend == "numba":
-        # ---- Numba JIT + parallel ----------------------------------------
+        # ---- Numba JIT + parallel (PCH08 only, see the check above) -----
         M0_array = np.full(N, M0)
 
         # Warm-up / compile pass (small N so it's fast)
@@ -277,5 +399,11 @@ if __name__ == "__main__":
 
     # Single-tree serial loop for debugging
     python main.py --params_file params.yaml --n_trees 100 --backend serial
+
+    # The exact Zhang-Hui algorithm instead of PCH08's fitted rate
+    python main.py --params_file params.yaml --n_trees 1000 --algorithm zhang-hui
+
+    # Brownian-bridge-constrained trees, guaranteed to reach M1 at z1
+    python main.py --params_file params.yaml --n_trees 100 --algorithm constrained --M1 1e11 --z1 4.0
     """
     main()

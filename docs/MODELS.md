@@ -224,7 +224,11 @@ python -m foraois.main --params_file <config.yml> --n_trees 1000 --backend numpy
 |---|---|---|
 | `--params_file` | required | Path to the YAML config |
 | `--n_trees` | 1000 | Forest size |
-| `--backend` | `numpy` | `serial` / `numpy` / `numba` (needs `pip install foraois[numba]`) |
+| `--algorithm` | `pch08` | `pch08` / `zhang-hui` / `constrained` |
+| `--backend` | `numpy` | `serial` / `numpy` / `numba` (needs `pip install foraois[numba]`); ignored for `--algorithm constrained` |
+| `--M1`, `--z1` | 1e11, 4.0 | `--algorithm constrained` only: the guaranteed progenitor mass/redshift |
+
+`--algorithm zhang-hui`/`constrained` both call `ZhangHuiMergerTree.build_tree`'s `O(N_grid^2)`-per-step solver somewhere in their path (directly for `zhang-hui --backend serial`; via the unconstrained continuation for `constrained`) -- `main.py` uses a coarser `(z_max=8, dz=0.2, N_grid=60)` there than PCH08's `(z_max=15, dz=0.005)`, and neither is meant for bulk (`--n_trees` large) generation the way PCH08's `numpy`/`numba` backends or `zhang-hui --backend numpy` (closed-form, no such cost) are.
 
 ## FDM caveat
 

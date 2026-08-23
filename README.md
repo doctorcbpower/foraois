@@ -119,6 +119,19 @@ python -m foraois.main --params_file config/planck2018.yml --n_trees 1000 --back
 | `numpy` | Vectorised NumPy, all trees stepped through each redshift bin simultaneously, no extra dependencies (default) |
 | `numba` | JIT + `nb.prange` parallel across all CPU cores, fastest for large `N` -- needs `pip install foraois[numba]` |
 
+`--algorithm` selects which tree-building algorithm drives the CLI:
+
+```
+python -m foraois.main --params_file config/planck2018.yml --n_trees 1000 --algorithm zhang-hui --backend numpy
+python -m foraois.main --params_file config/planck2018.yml --n_trees 100 --algorithm constrained --M1 1e11 --z1 4.0
+```
+
+| Algorithm | `--backend` support | Notes |
+|---|---|---|
+| `pch08` (default) | `serial` / `numpy` / `numba` | Parkinson, Cole & Helly (2008) fitted rate |
+| `zhang-hui` | `serial` / `numpy` (no `numba` yet, see [ROADMAP.md](ROADMAP.md)) | Exact Zhang & Hui (2006) rate; `--backend serial` calls an `O(N_grid^2)` solve at every step and is genuinely slow per tree -- use `--backend numpy` (closed-form, no such cost) for anything beyond a single illustrative tree |
+| `constrained` | ignored -- always a serial loop | Nadler et al. (2023) Brownian-bridge-constrained branch, guaranteed to reach `--M1` at `--z1`; no vectorised backend exists yet (see [ROADMAP.md](ROADMAP.md)), so keep `--n_trees` small |
+
 ## Package structure
 
 | Module | Responsibility |
