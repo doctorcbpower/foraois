@@ -7,6 +7,19 @@ class WindowFunctions:
     """
 
     def __init__(self, window_function_type="top_hat", **kwargs):
+        """
+        Parameters
+        ----------
+        window_function_type : {"top_hat", "sharp_k", "gaussian"}
+            Real-space top-hat (default), Fourier-space sharp-k step
+            function (k0 = sharp_k_alpha/R), or Gaussian.
+        use_spherical_bessel : bool, keyword-only
+            Top-hat only: use the spherical-Bessel-function form of the
+            window integral instead of the closed form. Default True.
+        sharp_k_alpha : float, keyword-only
+            Sharp-k window's k0 = alpha/R calibration constant (Benson
+            et al. 2013). Default 2.5.
+        """
         self.window_function_type = window_function_type
         self.use_spherical_bessel = kwargs.get("use_spherical_bessel", True)
         # Sharp-k window cutoff: W(kR) = Theta(alpha - kR), i.e. k0 = alpha/R.

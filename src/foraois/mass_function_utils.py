@@ -8,11 +8,23 @@ class MassFunctions:
     """
 
     def __init__(self, cosmo_data, redshift=None):
+        """
+        Parameters
+        ----------
+        cosmo_data : foraois.cosmo_utils.CosmoData
+            Must already have its sigma(M) grid built (e.g. via
+            PCHMergerTree(cosmo_data, ...), which calls
+            cosmo_data._prepare_sigma_grid() as a side effect).
+        redshift : list of float, optional
+            Redshift(s) used for the cosmic mean density; default [0.0].
+        """
         if redshift is None:
             redshift = [0.0]
         self.redshift = np.asarray(redshift)
         if np.any(self.redshift < 0):
-            raise ValueError("Redshift must be a non-negative float or array of non-negative floats.")
+            raise ValueError(
+                f"Redshift must be a non-negative float or array of non-negative floats; received redshift={redshift}."
+            )
         self.cosmo_data = cosmo_data
         self.rhomean = cosmo_data.get_omega_matter(redshift) * 2.7755e11
 
@@ -72,7 +84,7 @@ class MassFunctions:
         """
         redshift = np.atleast_1d(redshift)
         if np.any(redshift < 0):
-            raise ValueError("Redshift cannot be less than zero")
+            raise ValueError(f"Redshift cannot be less than zero; received redshift={redshift}.")
 
         logmass = np.arange(8, 15, 0.1)
         masses = 10**logmass
@@ -100,11 +112,11 @@ class MassFunctions:
         """
         masses = np.atleast_1d(mass)
         if np.any(masses <= 0):
-            raise ValueError("Cannot have masses less than or equal to zero")
+            raise ValueError(f"Cannot have masses less than or equal to zero; received mass={mass}.")
 
         redshifts = np.atleast_1d(redshift)
         if np.any(redshifts < 0):
-            raise ValueError("Cannot have redshifts less than zero")
+            raise ValueError(f"Cannot have redshifts less than zero; received redshift={redshift}.")
 
         nu = self._get_nu(masses, redshift)
 
@@ -121,11 +133,11 @@ class MassFunctions:
         """
         masses = np.atleast_1d(mass)
         if np.any(masses <= 0):
-            raise ValueError("Cannot have masses less than or equal to zero")
+            raise ValueError(f"Cannot have masses less than or equal to zero; received mass={mass}.")
 
         redshifts = np.atleast_1d(redshift)
         if np.any(redshifts < 0):
-            raise ValueError("Cannot have redshifts less than zero")
+            raise ValueError(f"Cannot have redshifts less than zero; received redshift={redshift}.")
 
         nu = self._get_nu(masses, redshift)
         nuprime = 0.84 * nu
@@ -148,10 +160,10 @@ class MassFunctions:
         """
         masses = np.atleast_1d(mass)
         if np.any(masses <= 0):
-            raise ValueError("Cannot have masses less than or equal to zero")
+            raise ValueError(f"Cannot have masses less than or equal to zero; received mass={mass}.")
 
         redshifts = np.atleast_1d(redshift)
         if np.any(redshifts < 0):
-            raise ValueError("Cannot have redshifts less than zero")
+            raise ValueError(f"Cannot have redshifts less than zero; received redshift={redshift}.")
 
         return np.abs(self._get_dlogsigma_dlogm(masses))

@@ -33,6 +33,19 @@ jobs:
         run: |
           twine check dist/*
 
+      - name: Install built wheel and verify import (outside the repo checkout)
+        run: |
+          python -m venv /tmp/wheel-install-test
+          /tmp/wheel-install-test/bin/pip install --upgrade pip
+          /tmp/wheel-install-test/bin/pip install dist/*.whl
+          cd /tmp
+          /tmp/wheel-install-test/bin/python -c "
+          import foraois
+          from foraois import CosmoData, PCHMergerTree, ZhangHuiMergerTree, build_constrained_tree
+          print('import ok:', foraois.__all__)
+          "
+          /tmp/wheel-install-test/bin/foraois-run --help
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:

@@ -533,6 +533,27 @@ class ZhangHuiMergerTree:
         N_grid=400,
         S_max_factor=8.0,
     ):
+        """
+        Parameters
+        ----------
+        cosmo_data : foraois.cosmo_utils.CosmoData
+            Builds the sigma(M) grid as a side effect of construction (see
+            PCHMergerTree.__init__'s docstring for the same note).
+        params : dict, optional
+            Currently unused; accepted for signature parity with
+            PCHMergerTree.
+        model : {"cdm", "wdm", "fdm", "sidm"}
+            Collapse-barrier model; see foraois.collapse.delta_c.
+        rng : np.random.Generator, optional
+            Default: a fresh np.random.default_rng() (unseeded).
+        N_grid : int
+            solve_first_crossing's grid resolution -- see
+            first_crossing_step's own grid-resolution warning for how to
+            choose this per problem.
+        S_max_factor : float
+            first_crossing_step's S_max = S_max_factor * S_res, sizing the
+            solver's grid off the resolution mass.
+        """
         self.cosmo_data = cosmo_data
         self.params = params
         self.model = model

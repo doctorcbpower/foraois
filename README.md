@@ -39,11 +39,12 @@ cd foraois
 pip install -e .
 ```
 
-Core dependencies (`numpy`, `scipy`, `pyyaml`, `numba`, `matplotlib`) install automatically. A linear power spectrum is computed via CLASS or CAMB, which are optional extras -- install whichever backend(s) you need:
+Core dependencies (`numpy`, `scipy`, `pyyaml`, `matplotlib`) install automatically. A linear power spectrum is computed via CLASS or CAMB, and `PCHMergerTree`'s JIT-parallel backend needs `numba` -- all optional extras, install whichever you need:
 
 ```
 pip install -e .[class]   # requires classy (compiled from source)
 pip install -e .[camb]    # pip-installable
+pip install -e .[numba]   # PCHMergerTree.build_forest_numba; not needed for build_tree/build_forest_numpy
 ```
 
 (A `user` mode for supplying your own tabulated `P(k)` without either dependency is planned but not yet implemented -- see `CosmoData.get_power_spectrum()`.)
@@ -55,14 +56,15 @@ The example configs under `config/` (used throughout this README and the demo no
 **PCH08, via the CLI** -- the fastest way to generate a large forest of trees:
 
 ```
-python -m foraois.main --params_file config/planck2018.yml --n_trees 1000 --backend numba
+python -m foraois.main --params_file config/planck2018.yml --n_trees 1000 --backend numpy
 ```
+
+(`--backend numba` is faster still for large `N`, but needs `pip install -e .[numba]` first -- see Installation above.)
 
 **PCH08, via Python** -- for programmatic use, the same algorithm:
 
 ```python
-from foraois.cosmo_utils import CosmoData
-from foraois.pch_trees import PCHMergerTree
+from foraois import CosmoData, PCHMergerTree
 from foraois.utils import io
 
 run_params = io.get_params("config/planck2018.yml")
@@ -75,7 +77,7 @@ tree = tree_generator.build_tree(M0=1e12, z0=0.0, z_max=5.0, M_res=1e9, dz=0.2)
 **The exact Zhang-Hui algorithm** -- same tree-of-dicts shape as `build_tree` above, any collapse barrier:
 
 ```python
-from foraois.zhang_hui_trees import ZhangHuiMergerTree
+from foraois import ZhangHuiMergerTree
 
 tree_generator = ZhangHuiMergerTree(cosmo_data, run_params, model="cdm")
 tree = tree_generator.build_tree(M0=1e12, z0=0.0, z_max=5.0, M_res=1e9, dz=0.2)
@@ -84,7 +86,7 @@ tree = tree_generator.build_tree(M0=1e12, z0=0.0, z_max=5.0, M_res=1e9, dz=0.2)
 **A constrained tree**, guaranteed to reach a specified `(M1, z1)`:
 
 ```python
-from foraois.zhang_hui_constrained_trees import build_constrained_tree
+from foraois import build_constrained_tree
 
 tree = build_constrained_tree(
     M0=1e12, z0=0.0, M1=1e11, z1=4.0, z_max=8.0, M_res=1e9,
@@ -106,7 +108,7 @@ To use a non-standard dark matter model, add `dm_model`/`dm_model_mass` to the `
 The window function used for `sigma(M)` is independent of `dm_model` and defaults to the real-space top-hat. Add `window_function_type: sharp_k` (and optionally `sharp_k_alpha`, default `2.5`) to the `Run` section to use a sharp-k (Fourier-space step-function) window instead -- `W(k,R) = 1` for `k <= alpha/R`, `0` otherwise (Benson et al. 2013's WDM calibration, also used for FDM by Kulkarni & Ostriker 2022; see `config/planck2018_fdm_sharpk.yml`). This avoids the top-hat's "cloud-in-cloud" artifact, where its oscillatory tails let some small-scale power leak back in above a WDM/FDM suppression scale that a top-hat window doesn't fully remove. Because the window is discontinuous, `CosmoData` computes both `sigma(M)` and its mass derivative for `sharp_k` via dedicated closed-form/quadrature methods rather than the generic numerical-derivative route used for `top_hat`/`gaussian` -- transparent to any caller, but worth knowing if you're reading `cosmo_utils.py`. Note the resolution mass `M_res` passed to tree-building should stay well above whatever suppression scale a given `dm_model`+window combination imposes: `sigma(M)` genuinely flattens out below it (there's essentially no power left to resolve), and PCH08's branching-rate algebra isn't well-conditioned in that flat regime regardless of window choice.
 
 ```
-python -m foraois.main --params_file config/planck2018.yml --n_trees 1000 --backend numba
+python -m foraois.main --params_file config/planck2018.yml --n_trees 1000 --backend numpy
 ```
 
 `--backend` selects the tree-growth kernel:
@@ -114,8 +116,8 @@ python -m foraois.main --params_file config/planck2018.yml --n_trees 1000 --back
 | Backend | Description |
 |---|---|
 | `serial` | Original single-tree loop (`PCHMergerTree.build_tree`) -- kept for debugging/reference |
-| `numpy` | Vectorised NumPy, all trees stepped through each redshift bin simultaneously, no extra dependencies |
-| `numba` | JIT + `nb.prange` parallel across all CPU cores (default, fastest for large `N`) |
+| `numpy` | Vectorised NumPy, all trees stepped through each redshift bin simultaneously, no extra dependencies (default) |
+| `numba` | JIT + `nb.prange` parallel across all CPU cores, fastest for large `N` -- needs `pip install foraois[numba]` |
 
 ## Package structure
 

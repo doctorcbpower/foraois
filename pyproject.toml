@@ -13,7 +13,6 @@ dependencies = [
     "numpy",
     "scipy",
     "pyyaml",
-    "numba",
     "matplotlib",
 ]
 
@@ -50,6 +49,7 @@ keywords = [
 [project.optional-dependencies]
 class = ["classy"]
 camb = ["camb"]
+numba = ["numba"]
 dev = [
     "pytest>=7",
     "pytest-cov",
@@ -57,6 +57,7 @@ dev = [
     "ruff",
     "build",
     "twine",
+    "numba",
 ]
 
 [project.scripts]

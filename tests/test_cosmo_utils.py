@@ -366,3 +366,70 @@ def test_camb_sigma8_matches_target_for_menon_power_2024_config():
     pk_data = cosmo_data.get_power_spectrum()
     sigma8 = np.sqrt(cosmo_data.get_mass_variance(pk_data, radius=8.0, window_function_type="top_hat"))
     assert sigma8 == pytest.approx(0.815, abs=1e-3)
+
+
+# ---------------------------------------------------------------------------
+# CosmoData.from_params -- direct keyword-argument construction, no config
+# file or hand-built nested dict needed.
+# ---------------------------------------------------------------------------
+
+
+def test_from_params_matches_get_params_plus_init():
+    # from_params(...) should produce the exact same nested params dict
+    # (and thus the exact same CosmoData state) as the get_params(yaml) +
+    # CosmoData(...) path it's meant to replace for interactive use.
+    from foraois.cosmo_utils import CosmoData
+    from foraois.utils import io
+
+    run_params = io.get_params("config/planck2018_camb.yml")
+    via_yaml = CosmoData(run_params, redshift=[0.0])
+
+    cosmology = run_params["Cosmology"]
+    via_kwargs = CosmoData.from_params(
+        H0=cosmology["H0"],
+        OmegaM=cosmology["OmegaM"],
+        OmegaBar=run_params["Cosmology"]["omega_b"] / cosmology["h"] ** 2,
+        As=cosmology["As"],
+        ns=cosmology["ns"],
+        tau=cosmology["tau"],
+        OmegaK=cosmology["OmegaK"],
+        mnu=cosmology["mnu"],
+        mode="camb",
+        pk_kmin=run_params["Code"]["pk_kmin"],
+        pk_kmax=run_params["Code"]["pk_kmax"],
+        pk_npoints=run_params["Code"]["pk_npoints"],
+        redshift=[0.0],
+    )
+
+    assert via_kwargs.cosmo_params == pytest.approx(via_yaml.cosmo_params)
+    assert via_kwargs.mode == via_yaml.mode
+
+
+def test_from_params_defaults_need_only_the_core_six():
+    # The six parameters with no default (H0, OmegaM, OmegaBar, As, ns,
+    # tau) should be enough on their own -- everything else (mode="camb",
+    # dm_model="cdm", window_function_type="top_hat", ...) should default
+    # to a working configuration.
+    from foraois.cosmo_utils import CosmoData
+
+    cosmo = CosmoData.from_params(H0=67.66, OmegaM=0.3111, OmegaBar=0.0490, As=2.105e-9, ns=0.9665, tau=0.0561)
+    assert cosmo.mode == "camb"
+    assert cosmo.window_function_type == "top_hat"
+    assert cosmo.run_params["dm_model"] == "cdm"
+
+
+def test_from_params_wdm_wiring():
+    from foraois.cosmo_utils import CosmoData
+
+    cosmo = CosmoData.from_params(
+        H0=67.66,
+        OmegaM=0.3111,
+        OmegaBar=0.0490,
+        As=2.105e-9,
+        ns=0.9665,
+        tau=0.0561,
+        dm_model="wdm",
+        dm_model_mass=3.0,
+    )
+    assert cosmo.run_params["dm_model"] == "wdm"
+    assert cosmo.run_params["dm_model_mass"] == pytest.approx(3.0)

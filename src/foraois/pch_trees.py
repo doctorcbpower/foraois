@@ -1,6 +1,13 @@
-import numba as nb
 import numpy as np
 from scipy import integrate
+
+try:
+    import numba as nb
+
+    _HAVE_NUMBA = True
+except ImportError:
+    nb = None
+    _HAVE_NUMBA = False
 
 # ---------------------------------------------------------------------------
 # J(u) lookup table -- Parkinson, Cole & Helly (2008) Appendix A, eq. A7
@@ -160,170 +167,174 @@ def _unresolved_accretion_fraction(M2, terms, delta0, d_omega, G0, gamma2, j_u_g
 # ---------------------------------------------------------------------------
 
 
-@nb.njit(parallel=True, cache=True, fastmath=True)
-def _build_forest_kernel(
-    M0_array,  # (N,)   initial halo masses
-    z_steps,  # (S,)   redshift grid edges
-    dc_z_grid,  # (Nz,) precomputed redshift grid for delta_col table
-    dc_dc_grid,  # (Nz,) delta_col values on that grid
-    logmass_grid,  # (Nm,) log10(M) grid for sigma table
-    sigma_grid,  # (Nm,) sigma(M) values
-    alpha_grid,  # (Nm,) alpha(M) = |dlnsigma/dlnM| values, same grid
-    j_u_grid,  # (Nj,) u grid for the J(u) lookup table
-    j_values,  # (Nj,) J(u) values on that grid
-    G0,  # scalar PCH parameter
-    gamma1,  # scalar PCH parameter (must be >= 0)
-    gamma2,  # scalar PCH parameter
-    M_res,  # scalar resolution mass
-):
-    """
-    Core Numba kernel.  Evolves N trees independently across S-1 redshift
-    steps.  Returns the main-progenitor mass history: shape (N, S-1), plus
-    two more (N, S-1) arrays decomposing each step's mass change into a
-    smooth and a merger-driven channel -- see the module docstring note
-    above _build_forest_numpy for what these mean and the exact identity
-    they satisfy relative to mass_history.
+if _HAVE_NUMBA:
 
-    Each tree index is processed by a separate thread (nb.prange) so there
-    is zero inter-thread communication and no locking overhead.
-    """
-    N = M0_array.shape[0]
-    S = z_steps.shape[0]
-    n_steps = S - 1
+    @nb.njit(parallel=True, cache=True, fastmath=True)
+    def _build_forest_kernel(
+        M0_array,  # (N,)   initial halo masses
+        z_steps,  # (S,)   redshift grid edges
+        dc_z_grid,  # (Nz,) precomputed redshift grid for delta_col table
+        dc_dc_grid,  # (Nz,) delta_col values on that grid
+        logmass_grid,  # (Nm,) log10(M) grid for sigma table
+        sigma_grid,  # (Nm,) sigma(M) values
+        alpha_grid,  # (Nm,) alpha(M) = |dlnsigma/dlnM| values, same grid
+        j_u_grid,  # (Nj,) u grid for the J(u) lookup table
+        j_values,  # (Nj,) J(u) values on that grid
+        G0,  # scalar PCH parameter
+        gamma1,  # scalar PCH parameter (must be >= 0)
+        gamma2,  # scalar PCH parameter
+        M_res,  # scalar resolution mass
+    ):
+        """
+        Core Numba kernel.  Evolves N trees independently across S-1 redshift
+        steps.  Returns the main-progenitor mass history: shape (N, S-1), plus
+        two more (N, S-1) arrays decomposing each step's mass change into a
+        smooth and a merger-driven channel -- see the module docstring note
+        above _build_forest_numpy for what these mean and the exact identity
+        they satisfy relative to mass_history.
 
-    mass_history = np.zeros((N, n_steps), dtype=np.float64)
-    smooth_accretion = np.zeros((N, n_steps), dtype=np.float64)
-    merger_mass = np.zeros((N, n_steps), dtype=np.float64)
-    inv_sqrt2pi = 1.0 / np.sqrt(2.0 * np.pi)
+        Each tree index is processed by a separate thread (nb.prange) so there
+        is zero inter-thread communication and no locking overhead.
+        """
+        N = M0_array.shape[0]
+        S = z_steps.shape[0]
+        n_steps = S - 1
 
-    for i in nb.prange(N):  # <-- parallel over trees
-        m = M0_array[i]
+        mass_history = np.zeros((N, n_steps), dtype=np.float64)
+        smooth_accretion = np.zeros((N, n_steps), dtype=np.float64)
+        merger_mass = np.zeros((N, n_steps), dtype=np.float64)
+        inv_sqrt2pi = 1.0 / np.sqrt(2.0 * np.pi)
 
-        for j in range(n_steps):
-            z0 = z_steps[j]
-            z1 = z_steps[j + 1]
-            d0 = _interp_sorted(z0, dc_z_grid, dc_dc_grid)
-            d1 = _interp_sorted(z1, dc_z_grid, dc_dc_grid)
-            d_omega = d1 - d0
+        for i in nb.prange(N):  # <-- parallel over trees
+            m = M0_array[i]
 
-            if m < M_res:
-                mass_history[i, j] = m
-                continue
+            for j in range(n_steps):
+                z0 = z_steps[j]
+                z1 = z_steps[j + 1]
+                d0 = _interp_sorted(z0, dc_z_grid, dc_dc_grid)
+                d1 = _interp_sorted(z1, dc_z_grid, dc_dc_grid)
+                d_omega = d1 - d0
 
-            qres = M_res / m
-            sigma2 = _interp_sorted(np.log10(m), logmass_grid, sigma_grid)
-            sigma_h = _interp_sorted(np.log10(m / 2.0), logmass_grid, sigma_grid)
-            sigma_res = _interp_sorted(np.log10(M_res), logmass_grid, sigma_grid)
-            alpha_h = _interp_sorted(np.log10(m / 2.0), logmass_grid, alpha_grid)
+                if m < M_res:
+                    mass_history[i, j] = m
+                    continue
 
-            # M2 < 2*M_res (qres >= 0.5): q's valid range [qres, 0.5] is
-            # empty, no split can produce two resolved fragments -- Nupper
-            # is exactly 0 (not the NaN log(0.5/qres) with qres>0.5 would
-            # otherwise give). Skip straight to unresolved accretion.
-            if qres >= 0.5:
-                beta = 0.0
-                B = 0.0
-                mu = alpha_h
-                eta = 1.0
-                Nupper = 0.0
-            else:
-                V_res = sigma_res**2 / (sigma_res**2 - sigma2**2) ** 1.5
-                V_half = sigma_h**2 / (sigma_h**2 - sigma2**2) ** 1.5
+                qres = M_res / m
+                sigma2 = _interp_sorted(np.log10(m), logmass_grid, sigma_grid)
+                sigma_h = _interp_sorted(np.log10(m / 2.0), logmass_grid, sigma_grid)
+                sigma_res = _interp_sorted(np.log10(M_res), logmass_grid, sigma_grid)
+                alpha_h = _interp_sorted(np.log10(m / 2.0), logmass_grid, alpha_grid)
 
-                beta = np.log(V_half / V_res) / np.log(0.5 / qres)
-                B = V_half / 0.5**beta
-                mu = alpha_h  # gamma1 >= 0 branch (eq. A8)
-                eta = beta - 1.0 - gamma1 * mu
-
-                S_coeff = (
-                    np.sqrt(2.0 / np.pi)
-                    * B
-                    * alpha_h
-                    * G0
-                    * (2.0 ** (mu * gamma1))
-                    * (d0 / sigma2) ** gamma2
-                    * (sigma_h / sigma2) ** gamma1
-                )
-
-                if abs(eta) < 1e-8:
-                    integral_q = np.log(0.5 / qres)
+                # M2 < 2*M_res (qres >= 0.5): q's valid range [qres, 0.5] is
+                # empty, no split can produce two resolved fragments -- Nupper
+                # is exactly 0 (not the NaN log(0.5/qres) with qres>0.5 would
+                # otherwise give). Skip straight to unresolved accretion.
+                if qres >= 0.5:
+                    beta = 0.0
+                    B = 0.0
+                    mu = alpha_h
+                    eta = 1.0
+                    Nupper = 0.0
                 else:
-                    integral_q = (0.5**eta - qres**eta) / eta
-                Nupper = S_coeff * d_omega * integral_q
+                    V_res = sigma_res**2 / (sigma_res**2 - sigma2**2) ** 1.5
+                    V_half = sigma_h**2 / (sigma_h**2 - sigma2**2) ** 1.5
 
-            # unresolved accretion fraction (applies regardless of split)
-            u_res = sigma2 / np.sqrt(max(sigma_res**2 - sigma2**2, 1e-300))
-            J_u_res = _interp_sorted(u_res, j_u_grid, j_values)
-            F = inv_sqrt2pi * J_u_res * (G0 / sigma2) * (d0 / sigma2) ** gamma2 * d_omega
-            if F < 0.0:
-                F = 0.0
-            elif F > 1.0:
-                F = 1.0
+                    beta = np.log(V_half / V_res) / np.log(0.5 / qres)
+                    B = V_half / 0.5**beta
+                    mu = alpha_h  # gamma1 >= 0 branch (eq. A8)
+                    eta = beta - 1.0 - gamma1 * mu
 
-            r1 = np.random.rand()
-            if r1 > Nupper:
+                    S_coeff = (
+                        np.sqrt(2.0 / np.pi)
+                        * B
+                        * alpha_h
+                        * G0
+                        * (2.0 ** (mu * gamma1))
+                        * (d0 / sigma2) ** gamma2
+                        * (sigma_h / sigma2) ** gamma1
+                    )
+
+                    if abs(eta) < 1e-8:
+                        integral_q = np.log(0.5 / qres)
+                    else:
+                        integral_q = (0.5**eta - qres**eta) / eta
+                    Nupper = S_coeff * d_omega * integral_q
+
+                # unresolved accretion fraction (applies regardless of split)
+                u_res = sigma2 / np.sqrt(max(sigma_res**2 - sigma2**2, 1e-300))
+                J_u_res = _interp_sorted(u_res, j_u_grid, j_values)
+                F = inv_sqrt2pi * J_u_res * (G0 / sigma2) * (d0 / sigma2) ** gamma2 * d_omega
+                if F < 0.0:
+                    F = 0.0
+                elif F > 1.0:
+                    F = 1.0
+
+                r1 = np.random.rand()
+                if r1 > Nupper:
+                    smooth_accretion[i, j] = F * m
+                    mass_history[i, j] = m * (1.0 - F)
+                    m = m * (1.0 - F)
+                    continue
+
+                u2 = np.random.rand()
+                if abs(eta) < 1e-8:
+                    q = qres * (0.5 / qres) ** u2
+                else:
+                    q = (qres**eta + u2 * (0.5**eta - qres**eta)) ** (1.0 / eta)
+
+                sigma1_q = _interp_sorted(np.log10(q * m), logmass_grid, sigma_grid)
+                alpha1_q = _interp_sorted(np.log10(q * m), logmass_grid, alpha_grid)
+                V_q = sigma1_q**2 / (sigma1_q**2 - sigma2**2) ** 1.5
+                R = (alpha1_q / alpha_h) * (V_q / (B * q**beta)) * ((2.0 * q) ** mu * sigma1_q / sigma_h) ** gamma1
+
+                r3 = np.random.rand()
+                if r3 > R:
+                    smooth_accretion[i, j] = F * m
+                    mass_history[i, j] = m * (1.0 - F)
+                    m = m * (1.0 - F)
+                    continue
+
+                M1 = q * m
+                M2 = m * (1.0 - F - q)
                 smooth_accretion[i, j] = F * m
-                mass_history[i, j] = m * (1.0 - F)
-                m = m * (1.0 - F)
-                continue
+                merger_mass[i, j] = M1 if M1 < M2 else M2
+                m = M1 if M1 >= M2 else M2
+                mass_history[i, j] = m
 
-            u2 = np.random.rand()
-            if abs(eta) < 1e-8:
-                q = qres * (0.5 / qres) ** u2
+            # end step loop
+        # end tree loop (prange)
+
+        return mass_history, smooth_accretion, merger_mass
+
+    @nb.njit(cache=True)
+    def _interp_sorted(x, xp, fp):
+        """
+        Scalar linear interpolation assuming xp is sorted ascending.
+        Equivalent to np.interp(x, xp, fp) but callable from inside @njit.
+        Clamps to boundary values outside the range.
+        """
+        n = xp.shape[0]
+
+        if x <= xp[0]:
+            return fp[0]
+        if x >= xp[n - 1]:
+            return fp[n - 1]
+
+        # Binary search
+        lo = 0
+        hi = n - 1
+        while hi - lo > 1:
+            mid = (lo + hi) >> 1
+            if xp[mid] <= x:
+                lo = mid
             else:
-                q = (qres**eta + u2 * (0.5**eta - qres**eta)) ** (1.0 / eta)
+                hi = mid
 
-            sigma1_q = _interp_sorted(np.log10(q * m), logmass_grid, sigma_grid)
-            alpha1_q = _interp_sorted(np.log10(q * m), logmass_grid, alpha_grid)
-            V_q = sigma1_q**2 / (sigma1_q**2 - sigma2**2) ** 1.5
-            R = (alpha1_q / alpha_h) * (V_q / (B * q**beta)) * ((2.0 * q) ** mu * sigma1_q / sigma_h) ** gamma1
-
-            r3 = np.random.rand()
-            if r3 > R:
-                smooth_accretion[i, j] = F * m
-                mass_history[i, j] = m * (1.0 - F)
-                m = m * (1.0 - F)
-                continue
-
-            M1 = q * m
-            M2 = m * (1.0 - F - q)
-            smooth_accretion[i, j] = F * m
-            merger_mass[i, j] = M1 if M1 < M2 else M2
-            m = M1 if M1 >= M2 else M2
-            mass_history[i, j] = m
-
-        # end step loop
-    # end tree loop (prange)
-
-    return mass_history, smooth_accretion, merger_mass
-
-
-@nb.njit(cache=True)
-def _interp_sorted(x, xp, fp):
-    """
-    Scalar linear interpolation assuming xp is sorted ascending.
-    Equivalent to np.interp(x, xp, fp) but callable from inside @njit.
-    Clamps to boundary values outside the range.
-    """
-    n = xp.shape[0]
-
-    if x <= xp[0]:
-        return fp[0]
-    if x >= xp[n - 1]:
-        return fp[n - 1]
-
-    # Binary search
-    lo = 0
-    hi = n - 1
-    while hi - lo > 1:
-        mid = (lo + hi) >> 1
-        if xp[mid] <= x:
-            lo = mid
-        else:
-            hi = mid
-
-    t = (x - xp[lo]) / (xp[hi] - xp[lo])
-    return fp[lo] + t * (fp[hi] - fp[lo])
+        t = (x - xp[lo]) / (xp[hi] - xp[lo])
+        return fp[lo] + t * (fp[hi] - fp[lo])
+else:
+    _build_forest_kernel = None
+    _interp_sorted = None
 
 
 # ---------------------------------------------------------------------------
@@ -501,6 +512,10 @@ class PCHMergerTree:
       ~100–1000× faster than calling ``build_tree`` N times.
     * ``build_forest_numba()`` — Numba JIT + parallel implementation; uses
       all CPU cores.  ~8–32× faster than the NumPy version for large N.
+      Requires the optional ``numba`` dependency (``pip install
+      foraois[numba]``) -- raises ``ImportError`` with that instruction if
+      it isn't installed; ``build_tree``/``build_forest_numpy`` need no
+      such extra.
     """
 
     # PCH (2008) best-fit parameters (Parkinson, Cole & Helly 2008, MNRAS
@@ -513,6 +528,19 @@ class PCHMergerTree:
     gamma2 = -0.01
 
     def __init__(self, cosmo_data, params):
+        """
+        Parameters
+        ----------
+        cosmo_data : foraois.cosmo_utils.CosmoData
+            Builds the sigma(M) grid as a side effect of construction
+            (calls ``cosmo_data._prepare_sigma_grid()``) -- other code
+            that needs that grid (e.g. ``MassFunctions``) should be
+            constructed after this, not before.
+        params : dict
+            Currently unused beyond being stored as ``self.params`` --
+            PCH08's own rate parameters (G0, gamma1, gamma2) are fixed
+            class attributes, not read from ``params``.
+        """
         self.cosmo_data = cosmo_data
         self.params = params
         self.pk_data = cosmo_data.get_power_spectrum()
@@ -589,15 +617,32 @@ class PCHMergerTree:
     # ------------------------------------------------------------------
 
     def compute_g_modifier(self, sigma_M1, sigma_M0, delta_z0):
+        """
+        PCH08's own 2-parameter modifier g(sigma1/sigma0, delta_z0/sigma0)
+        = G0 * (sigma1/sigma0)^gamma1 * (delta_z0/sigma0)^gamma2, evaluated
+        at a single (M1, M0) point. Only one ingredient of the full
+        Appendix A branching-rate/rejection-sampling algorithm -- see
+        draw_progenitor_masses/build_forest_numpy for the actual
+        tree-building machinery.
+        """
         x = sigma_M1 / sigma_M0
         y = delta_z0 / sigma_M0
         return self.G0 * (x**self.gamma1) * (y**self.gamma2)
 
     def get_mass_variance_at_mass(self, mass):
+        """sigma(M) at the given mass [Msun/h], top-hat window."""
         radius = self.cosmo_data.get_radius(mass)
         return self.cosmo_data.get_mass_variance(self.pk_data, radius=radius, window_function_type="top_hat")
 
     def dndM_prob(self, M1, M0, delta_0, delta_1, sigma_M0):
+        """
+        Unperturbed-EPS-times-g_modifier progenitor mass distribution at a
+        single mass point M1, i.e. eps_term(M1, M0, delta_0, delta_1) *
+        compute_g_modifier's g(M1, M0, delta_0) -- the pointwise quantity
+        Appendix A's branching rate is built from, not a normalized
+        probability density on its own. Returns 0.0 if sigma(M1) <=
+        sigma(M0) (M1 not a valid progenitor at this step).
+        """
         logM1 = np.log10(M1)
         sigma_M1 = self.cosmo_data.sigma_at_logmass(logM1)
 
@@ -1008,7 +1053,22 @@ class PCHMergerTree:
         ``merger_mass`` above (its nonzero entries *are* the per-halo merger
         history) instead of post-processing ``mass_history`` by comparing
         consecutive columns.
+
+        Raises
+        ------
+        ImportError
+            If numba is not installed -- it's an optional dependency
+            (``pip install foraois[numba]``); use ``build_forest_numpy``
+            instead (same API/return shape, no numba needed) if you don't
+            need the extra speed.
         """
+        if not _HAVE_NUMBA:
+            raise ImportError(
+                "build_forest_numba requires numba, which is not installed. "
+                "Install it with `pip install foraois[numba]` (or `pip install "
+                "numba` directly), or use build_forest_numpy instead -- same "
+                "API and return shape, no numba needed."
+            )
         self._ensure_delta_col_covers(z_max)
 
         M0_array = np.asarray(M0_array, dtype=np.float64)

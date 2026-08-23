@@ -4,12 +4,17 @@ import numpy as np
 from scipy import integrate, interpolate
 
 from foraois import transfer_functions
-from foraois.utils import window_function
+from foraois.utils import io, window_function
 
 
 class CosmoData:
     """
     A class to calculate and store cosmological data.
+
+    Construct either directly (``params`` in the nested
+    ``{"Cosmology": ..., "Code": ...}`` shape ``foraois.utils.io.get_params``
+    produces from a YAML file) or via ``CosmoData.from_params(...)`` for
+    plain-keyword-argument construction with no config file needed.
 
     Key performance changes vs. original
     -------------------------------------
@@ -24,6 +29,18 @@ class CosmoData:
     """
 
     def __init__(self, params, redshift=None):
+        """
+        Parameters
+        ----------
+        params : dict
+            ``{"Cosmology": {...}, "Code": {...}}``, e.g. from
+            ``foraois.utils.io.get_params(yaml_path)``. Prefer
+            ``CosmoData.from_params(...)`` for direct construction from
+            plain cosmological-parameter keyword arguments.
+        redshift : list of float, optional
+            Redshift(s) at which ``get_power_spectrum()`` will later
+            evaluate ``P(k, z)``. Default ``[0.0]``.
+        """
         if redshift is None:
             redshift = [0.0]
         self.run_params = params["Code"]
@@ -57,6 +74,117 @@ class CosmoData:
         # available without any extra call from the user.
         # ------------------------------------------------------------------
         self.precompute_delta_col_table()
+
+    @classmethod
+    def from_params(
+        cls,
+        H0,
+        OmegaM,
+        OmegaBar,
+        As,
+        ns,
+        tau,
+        OmegaK=0.0,
+        mnu=0.0,
+        num_massive_neutrinos=0.0,
+        mode="camb",
+        dm_model="cdm",
+        dm_model_mass=None,
+        window_function_type="top_hat",
+        sharp_k_alpha=2.5,
+        pk_kmin=1.0e-4,
+        pk_kmax=1.0e2,
+        pk_npoints=1000,
+        use_spherical_bessel=False,
+        redshift=None,
+        class_output="mPk",
+        class_pk_max_1_per_mpc=1000.0,
+    ):
+        """
+        Construct a ``CosmoData`` directly from cosmological-parameter
+        keyword arguments -- no YAML file or hand-built nested dict needed.
+
+        Builds the same ``{"Run": ..., "Cosmology": ...}`` shape a YAML
+        config parses to, then reuses ``foraois.utils.io.params_from_dict``
+        (the same derivation logic ``get_params`` uses, e.g. omega_b/
+        omega_cdm from OmegaBar/OmegaM/h) to produce the nested dict
+        ``CosmoData.__init__`` expects.
+
+        Parameters
+        ----------
+        H0 : float
+            Hubble constant today, km/s/Mpc.
+        OmegaM, OmegaBar, OmegaK : float
+            Matter, baryon, and curvature density parameters today
+            (dimensionless). ``OmegaLambda`` is derived as ``1 - OmegaM``.
+        As : float
+            Primordial scalar power spectrum amplitude.
+        ns : float
+            Scalar spectral index.
+        tau : float
+            Reionization optical depth.
+        mnu : float
+            Sum of neutrino masses, eV.
+        num_massive_neutrinos : int
+            Number of massive neutrino species (CAMB only).
+        mode : {"camb", "class"}
+            Linear power spectrum backend. ``"camb"`` (default) is
+            pip-installable (``pip install foraois[camb]``); ``"class"``
+            requires ``classy`` (``pip install foraois[class]``).
+        dm_model : {"cdm", "wdm", "fdm"}
+            Dark matter model; see ``foraois.transfer_functions``.
+        dm_model_mass : float, optional
+            Required if ``dm_model`` is ``"wdm"`` (keV) or ``"fdm"``
+            (units of 1e-22 eV).
+        window_function_type : {"top_hat", "sharp_k", "gaussian"}
+            Window function for ``sigma(M)``; see
+            ``foraois.utils.window_function.WindowFunctions``.
+        sharp_k_alpha : float
+            Sharp-k window's ``k0 = alpha/R`` calibration constant
+            (Benson et al. 2013), only used if ``window_function_type="sharp_k"``.
+        pk_kmin, pk_kmax : float
+            ``P(k)` grid bounds, h/Mpc.
+        pk_npoints : int
+            Number of ``P(k)`` grid points.
+        use_spherical_bessel : bool
+            Use the spherical-Bessel-function form of the top-hat window
+            integral instead of the closed form.
+        redshift : list of float, optional
+            Passed through to ``CosmoData.__init__``. Default ``[0.0]``.
+        class_output, class_pk_max_1_per_mpc :
+            CLASS-specific settings, only used if ``mode="class"``.
+
+        Returns
+        -------
+        CosmoData
+        """
+        raw = {
+            "Run": {
+                "mode": mode,
+                "pk_kmin": pk_kmin,
+                "pk_kmax": pk_kmax,
+                "pk_npoints": pk_npoints,
+                "use_spherical_bessel": use_spherical_bessel,
+                "dm_model": dm_model,
+                "dm_model_mass": dm_model_mass,
+                "window_function_type": window_function_type,
+                "sharp_k_alpha": sharp_k_alpha,
+            },
+            "Cosmology": {
+                "H0": H0,
+                "OmegaM": OmegaM,
+                "OmegaBar": OmegaBar,
+                "OmegaK": OmegaK,
+                "As": As,
+                "ns": ns,
+                "tau_reio": tau,
+                "mnu": mnu,
+                "num_massive_neutrinos": num_massive_neutrinos,
+            },
+            mode: ({"output": class_output, "P_k_max_1/Mpc": class_pk_max_1_per_mpc} if mode == "class" else {}),
+        }
+        run_params = io.params_from_dict(raw, source="CosmoData.from_params() arguments")
+        return cls(run_params, redshift=redshift)
 
     # ------------------------------------------------------------------
     # Cosmological utility methods (unchanged from original)
@@ -105,7 +233,7 @@ class CosmoData:
     def get_hubble_parameter(self, redshift=0.0):
         redshift = np.asarray(redshift)
         if np.any(redshift < 0):
-            raise ValueError("Redshift must be non-negative.")
+            raise ValueError(f"Redshift must be non-negative; received redshift={redshift}.")
         H0 = self.cosmo_params["H0"]
         aexp = 1.0 / (1.0 + redshift)
         return H0 * np.sqrt(
@@ -117,7 +245,7 @@ class CosmoData:
     def get_omega_matter(self, redshift=0.0):
         redshift = np.asarray(redshift)
         if np.any(redshift < 0):
-            raise ValueError("Redshift must be non-negative.")
+            raise ValueError(f"Redshift must be non-negative; received redshift={redshift}.")
         H0 = self.cosmo_params["H0"]
         Omega0 = self.cosmo_params["OmegaM"]
         aexp = 1.0 / (1.0 + redshift)
@@ -138,7 +266,7 @@ class CosmoData:
         delta_col_z0 = 1.686
         redshifts = np.atleast_1d(redshift)
         if np.any(redshifts < 0):
-            raise ValueError("Redshift must be >= 0.")
+            raise ValueError(f"Redshift must be >= 0; received redshift={redshift}.")
 
         aexp = 1.0 / (1.0 + redshifts)
         a_grid = np.linspace(a_min, 1.0, n_a)
@@ -225,7 +353,7 @@ class CosmoData:
         """
         redshifts = np.atleast_1d(np.asarray(redshift, dtype=float))
         if np.any(redshifts < 0):
-            raise ValueError("Redshift must be non-negative.")
+            raise ValueError(f"Redshift must be non-negative; received redshift={redshift}.")
 
         aexp = 1.0 / (1.0 + redshifts)
         a_grid = np.linspace(a_min, 1.0, n_a)
@@ -278,6 +406,12 @@ class CosmoData:
     # ------------------------------------------------------------------
 
     def get_kvals(self):
+        """
+        log10(k) grid the linear P(k) will be evaluated on, h/Mpc, sized
+        from run_params['pk_kmin']/'pk_kmax'/'pk_npoints' (uniform in
+        log10 k). Sets self.log10kmin/log10kmax/npoints as a side effect,
+        consumed by get_power_spectrum()'s CLASS/CAMB branches.
+        """
         if "pk_kmin" not in self.run_params or "pk_kmax" not in self.run_params:
             raise KeyError("Run parameters must contain 'pk_kmin' and 'pk_kmax'.")
         self.log10kmin = np.log10(np.float32(self.run_params["pk_kmin"]))
@@ -548,6 +682,26 @@ class CosmoData:
     # ------------------------------------------------------------------
 
     def get_mass_variance(self, pk_data, radius=8.0, window_function_type="top_hat"):
+        """
+        sigma^2(R) = integral k^2 P(k) W(kR)^2 dk / (2 pi^2), the mass
+        variance at radius R (Mpc/h) for the linear P(k) in pk_data --
+        note this returns sigma^2, not sigma (e.g. sigma8 = sqrt(
+        get_mass_variance(pk_data, radius=8.0))). Sets
+        self.window_function_type as a side effect (see the comment
+        below on why this must be kept in sync with self.wf's own copy).
+
+        Parameters
+        ----------
+        pk_data : dict
+            {"k": ..., "Pk": ...} as returned by get_power_spectrum().
+        radius : float or array-like
+            Radius in Mpc/h.
+        window_function_type : {"top_hat", "sharp_k", "gaussian"}
+
+        Returns
+        -------
+        float or np.ndarray, same shape as radius
+        """
         # self.wf.window_function_type is what actually drives dispatch
         # inside WindowFunctions.window_function()/_prepare_windows() --
         # self.window_function_type (CosmoData's own attribute, used e.g. by
@@ -558,7 +712,7 @@ class CosmoData:
 
         radii = np.asarray(radius)
         if np.any(radius <= 0):
-            raise ValueError("All radii must be positive.")
+            raise ValueError(f"All radii must be positive; received radius={radius}.")
         if "k" not in pk_data or "Pk" not in pk_data:
             raise KeyError("pk_data must contain 'k' and 'Pk' keys.")
 
@@ -626,6 +780,24 @@ class CosmoData:
         return sigma
 
     def dlogsigma_dlogmass(self, pk_data, mass, window_function_type="top_hat"):
+        """
+        d ln(sigma) / d ln(M) at the given mass -- a numerical derivative
+        for top_hat/gaussian windows, a closed form for sharp_k (see
+        _sigma2_sharp_k's own docstring for why). Negative, since sigma
+        decreases with mass; PCHMergerTree's alpha_grid takes abs() of
+        this.
+
+        Parameters
+        ----------
+        pk_data : dict
+            {"k": ..., "Pk": ...} as returned by get_power_spectrum().
+        mass : float or array-like, Msun/h
+        window_function_type : {"top_hat", "sharp_k", "gaussian"}
+
+        Returns
+        -------
+        float or np.ndarray, same shape as mass
+        """
         # See get_mass_variance's comment: self.window_function_type must be
         # kept in sync with self.wf.window_function_type explicitly, and
         # unconditionally -- self.window_function_type is never actually
@@ -638,7 +810,7 @@ class CosmoData:
 
         masses = np.atleast_1d(mass).astype(float)
         if np.any(masses <= 0):
-            raise ValueError("All masses must be positive.")
+            raise ValueError(f"All masses must be positive; received mass={mass}.")
         radii = self.get_radius(masses)
 
         if "k" not in pk_data or "Pk" not in pk_data:
@@ -719,13 +891,13 @@ class CosmoData:
     def get_radius(self, mass):
         mass = np.asarray(mass)
         if np.any(mass <= 0):
-            raise ValueError("Mass must be positive.")
+            raise ValueError(f"Mass must be positive; received mass={mass}.")
         mean_density = self.cosmo_params["OmegaM"] * self.rhocrit0
         return (3 * mass / (4.0 * np.pi * mean_density)) ** (1.0 / 3.0)
 
     def get_mass(self, radius):
         radius = np.asarray(radius)
         if np.any(radius <= 0):
-            raise ValueError("Radius must be positive.")
+            raise ValueError(f"Radius must be positive; received radius={radius}.")
         mean_density = self.cosmo_params["OmegaM"] * self.rhocrit0
         return (4.0 * np.pi / 3.0) * mean_density * radius**3

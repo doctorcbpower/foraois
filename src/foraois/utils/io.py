@@ -3,7 +3,8 @@ import yaml
 
 def get_params(file_path):
     """
-    Open a YAML file containing run parameters.
+    Open a YAML file containing run parameters and reshape it into the
+    nested {"Cosmology": ..., "Code": ...} form CosmoData expects.
 
     Parameters:
     file_path (str): The path to the YAML file.
@@ -21,16 +22,44 @@ def get_params(file_path):
             "part of the git checkout, not the installed package -- run from the "
             "repository root, or pass an absolute path."
         ) from None
+    return params_from_dict(params, source=f"parameters file '{file_path}'")
+
+
+def params_from_dict(params, source="parameters dict"):
+    """
+    Reshape a raw {"Run": ..., "Cosmology": ..., "<backend>": ...} dict
+    (the shape a YAML config file parses to) into the nested
+    {"Cosmology": ..., "Code": ...} form CosmoData expects.
+
+    This is the shared validation/derivation logic behind get_params()
+    (loaded from a YAML file) and CosmoData.from_params() (built from
+    plain keyword arguments, no file needed) -- both produce a dict via
+    this function so there is exactly one place that knows how e.g.
+    omega_b/omega_cdm are derived from OmegaBar/OmegaM/h.
+
+    Parameters
+    ----------
+    params : dict
+        Raw config in the same shape a YAML file would parse to.
+    source : str
+        Human-readable description of where `params` came from, used only
+        to make error messages actionable (e.g. "parameters file 'x.yml'"
+        or "CosmoData.from_params() arguments").
+
+    Returns
+    -------
+    dict: A dictionary containing the run parameters.
+    """
     if not params:
-        raise ValueError(f"Parameters file '{file_path}' is empty or invalid.")
+        raise ValueError(f"{source} is empty or invalid.")
     if not isinstance(params, dict):
-        raise ValueError(f"Parameters file '{file_path}' does not contain a valid dictionary.")
+        raise ValueError(f"{source} does not contain a valid dictionary.")
     if "Run" not in params:
-        raise KeyError(f"Parameters file '{file_path}' does not contain 'Run' key.")
+        raise KeyError(f"{source} does not contain 'Run' key.")
     if "Cosmology" not in params:
-        raise KeyError(f"Parameters file '{file_path}' does not contain 'Cosmology' key.")
+        raise KeyError(f"{source} does not contain 'Cosmology' key.")
     if params["Run"]["mode"] not in params:
-        raise KeyError(f"Parameters file '{file_path}' does not contain {params['Run']['mode']} key.")
+        raise KeyError(f"{source} does not contain {params['Run']['mode']!r} key.")
 
     run_params = {
         "Cosmology": {},

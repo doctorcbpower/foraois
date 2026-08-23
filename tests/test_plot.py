@@ -69,6 +69,36 @@ def test_plot_forest_summary(tree_generator, tmp_path):
     _assert_png_written(out)
 
 
+def test_plot_mass_history(tree_generator, tmp_path):
+    np.random.seed(7)
+    mass_history, _, z_steps, _, _ = tree_generator.build_forest_numpy(
+        M0_array=np.full(500, M0), z0=Z0, z_max=Z_MAX, M_res=M_RES, dz=DZ
+    )
+    out = str(tmp_path / "mass_history")
+    plot.plot_mass_history(mass_history, z_steps, n_show=50, M_res=M_RES, file_name=out)
+    _assert_png_written(out)
+
+
+def test_plot_merger_rate(tree_generator, tmp_path):
+    np.random.seed(9)
+    _, split_events, z_steps, _, _ = tree_generator.build_forest_numpy(
+        M0_array=np.full(500, M0), z0=Z0, z_max=Z_MAX, M_res=M_RES, dz=DZ
+    )
+    out = str(tmp_path / "merger_rate")
+    plot.plot_merger_rate(split_events, z_steps, N_trees=500, file_name=out)
+    _assert_png_written(out)
+
+
+def test_plot_mass_function(tree_generator, tmp_path):
+    np.random.seed(10)
+    mass_history, _, z_steps, _, _ = tree_generator.build_forest_numpy(
+        M0_array=np.full(2000, M0), z0=Z0, z_max=Z_MAX, M_res=M_RES, dz=DZ
+    )
+    out = str(tmp_path / "mass_function")
+    plot.plot_mass_function(mass_history, z_steps, z_targets=[0.5, 1.0], M_res=M_RES, file_name=out)
+    _assert_png_written(out)
+
+
 def test_plot_tree_graph(tree_generator, tmp_path):
     np.random.seed(3)
     mass_history, split_events, z_steps, _, _ = tree_generator.build_forest_numpy(

@@ -107,7 +107,7 @@ F = sqrt(2/pi) * J(u_res) * (G0/sigma2) * (delta_col(z)/sigma2)^gamma2 * dz-fact
 
 Per step: draw `r1`; no split if `r1 > Nupper`, mass becomes `M0*(1-F)`. Otherwise draw a candidate `q`, compute `R(q)`, draw `r3`; reject (no split) if `r3 > R(q)`; otherwise split into `q*M0` and `M0*(1-F-q)`, keeping the more massive as the main progenitor.
 
-**Three backends** (`--backend`): `serial` (single-tree loop, reference/debug), `numpy` (all trees stepped through each redshift bin at once, no extra deps), `numba` (JIT + `nb.prange`-parallel across CPU cores, default -- fastest for large tree counts, but does not return per-step split events).
+**Three backends** (`--backend`): `serial` (single-tree loop, reference/debug), `numpy` (all trees stepped through each redshift bin at once, no extra deps, default), `numba` (JIT + `nb.prange`-parallel across CPU cores -- fastest for large tree counts, but does not return per-step split events; requires the optional `numba` dependency, `pip install foraois[numba]`).
 
 `build_tree`/`build_forest_*` track only the main branch; `build_full_tree` grows the entire branching structure (every progenitor, capped at `max_nodes`) for full merger-tree visualization (e.g. dendrograms).
 
@@ -215,14 +215,14 @@ A run is configured by a YAML file with top-level `Run`, `Cosmology`, and a sect
 ## CLI ([`main.py`](../src/foraois/main.py))
 
 ```
-python -m foraois.main --params_file <config.yml> --n_trees 1000 --backend numba
+python -m foraois.main --params_file <config.yml> --n_trees 1000 --backend numpy
 ```
 
 | Flag | Default | Meaning |
 |---|---|---|
 | `--params_file` | required | Path to the YAML config |
 | `--n_trees` | 1000 | Forest size |
-| `--backend` | `numba` | `serial` / `numpy` / `numba` |
+| `--backend` | `numpy` | `serial` / `numpy` / `numba` (needs `pip install foraois[numba]`) |
 
 ## FDM caveat
 

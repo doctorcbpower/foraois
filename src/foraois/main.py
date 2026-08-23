@@ -27,13 +27,14 @@ def main():
         "--backend",
         dest="backend",
         type=str,
-        default="numba",
+        default="numpy",
         choices=["serial", "numpy", "numba"],
         help=(
             "Tree-building backend: "
             '"serial" (original single-tree loop, for testing), '
-            '"numpy" (vectorised, no extra deps), '
-            '"numba" (JIT + parallel, fastest, default)'
+            '"numpy" (vectorised, no extra deps, default), '
+            '"numba" (JIT + parallel, fastest for large N, needs '
+            "`pip install foraois[numba]`)"
         ),
     )
     args = parser.parse_args()
@@ -262,13 +263,10 @@ if __name__ == "__main__":
     """
     Usage examples
     --------------
-    # 1 000 trees with Numba (default)
+    # 1 000 trees with vectorised NumPy (default, no extra deps)
     python main.py --params_file params.yaml --n_trees 1000
 
-    # 100 000 trees with vectorised NumPy
-    python main.py --params_file params.yaml --n_trees 100000 --backend numpy
-
-    # 1 000 000 trees with Numba + all CPU cores
+    # 1 000 000 trees with Numba + all CPU cores (needs `pip install foraois[numba]`)
     python main.py --params_file params.yaml --n_trees 1000000 --backend numba
 
     # Single-tree serial loop for debugging

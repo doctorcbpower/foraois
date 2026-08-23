@@ -75,6 +75,19 @@ def test_forest_numba_shape_and_bounds(tree_generator):
     assert merger_mass.shape == (N, n_steps)
 
 
+def test_build_forest_numba_raises_actionable_error_without_numba(tree_generator, monkeypatch):
+    # numba is an optional dependency (pip install foraois[numba]) --
+    # simulate it being absent (rather than actually uninstalling it,
+    # which the rest of this test module needs) and check the resulting
+    # error tells the user what to do instead of an AttributeError/
+    # NameError from calling a None kernel.
+    import foraois.pch_trees as pch_trees_module
+
+    monkeypatch.setattr(pch_trees_module, "_HAVE_NUMBA", False)
+    with pytest.raises(ImportError, match=r"foraois\[numba\]"):
+        tree_generator.build_forest_numba(M0_array=np.full(10, M0), z0=Z0, z_max=Z_MAX, M_res=M_RES, dz=DZ)
+
+
 def test_numba_and_numpy_backends_statistically_consistent(tree_generator):
     # The two backends draw randoms in different orders (numpy: one batch of
     # N draws per step; numba: prange over trees, order not fixed), so exact
