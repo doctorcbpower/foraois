@@ -1,0 +1,83 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "foraois: Monte Carlo dark matter halo merger trees"
+type: software
+authors:
+  - family-names: "Power"
+    given-names: "Chris"
+    email: "chris.power@uwa.edu.au"
+    affiliation: "International Centre for Radio Astronomy Research, The University of Western Australia"
+repository-code: "https://github.com/doctorcbpower/foraois"
+abstract: >-
+  A Python implementation of two Monte Carlo dark matter halo merger-tree
+  algorithms: Parkinson, Cole & Helly (2008)'s fitted branching-rate
+  approach (multi-backend: serial/NumPy/Numba), and an exact,
+  barrier-agnostic approach built directly on Zhang & Hui (2006)'s exact
+  first-crossing distribution, including a working implementation of
+  Nadler, Benson, Driskell, Du & Gluscevic (2023)'s Brownian-bridge-
+  constrained excursions for cheaply sampling merger trees guaranteed to
+  reach a specified progenitor mass and redshift. Supports CDM, WDM, and
+  FDM (via power-spectrum transfer functions and window-function choice),
+  with an extensive validation suite cross-checking each algorithm against
+  independent quadrature, direct Monte Carlo random walks, and each other.
+keywords:
+  - astronomy
+  - astrophysics
+  - dark matter
+  - merger trees
+  - excursion set theory
+  - Monte Carlo
+license: MIT
+version: 0.1.0
+date-released: "2026-08-22"
+# No preferred-citation yet: that field should point to the paper
+# describing this software itself, not the algorithms it implements --
+# add it once that paper exists. PCH08, N23, and Zhang & Hui (2006) are
+# listed under references below since they're the algorithms this code
+# implements, not citations for the code itself.
+references:
+  - type: article
+    authors:
+      - family-names: "Parkinson"
+        given-names: "Hannah"
+      - family-names: "Cole"
+        given-names: "Shaun"
+      - family-names: "Helly"
+        given-names: "John"
+    title: "Generating dark matter halo merger trees"
+    journal: "Monthly Notices of the Royal Astronomical Society"
+    year: 2008
+    volume: 383
+    pages: "557-564"
+    doi: "10.1111/j.1365-2966.2007.12517.x"
+  - type: article
+    authors:
+      - family-names: "Nadler"
+        given-names: "Ethan O."
+      - family-names: "Benson"
+        given-names: "Andrew"
+      - family-names: "Driskell"
+        given-names: "Trey"
+      - family-names: "Du"
+        given-names: "Xiaolong"
+      - family-names: "Gluscevic"
+        given-names: "Vera"
+    title: "Growing the first galaxies' merger trees"
+    journal: "Monthly Notices of the Royal Astronomical Society"
+    year: 2023
+    volume: 521
+    issue: 3
+    pages: "3201-3220"
+    doi: "10.1093/mnras/stad666"
+  - type: article
+    authors:
+      - family-names: "Zhang"
+        given-names: "Jun"
+      - family-names: "Hui"
+        given-names: "Lam"
+    title: "On Random Walks with a General Moving Barrier"
+    journal: "The Astrophysical Journal"
+    year: 2006
+    volume: 641
+    start: "641"
+    doi: "10.1086/499802"

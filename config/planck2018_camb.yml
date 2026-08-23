@@ -1,0 +1,28 @@
+Run:
+  mode: camb
+  pk_kmin: 1.e-4
+  pk_kmax: 1.e2
+  pk_npoints: 2000
+  plot_pk: False
+  plot_mvar: False
+  pk_file_name: camb_pk
+  mvar_file_name: camb_mvar
+  use_spherical_bessel: False  # Use spherical bessel function for top-hat filter
+
+Cosmology:
+  H0: 67.556
+  OmegaBar: 0.048275
+  OmegaM: 0.3120456
+  OmegaK: 0.0
+  As: 2.215e-9
+  ns: 0.9619
+  tau_reio: 0.0925
+  mnu: 0.0
+
+class:
+  output: mPk
+  P_k_max_1/Mpc: 1000.
+
+camb:
+
+user:

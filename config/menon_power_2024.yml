@@ -1,0 +1,37 @@
+Run:
+  mode: camb
+  pk_kmin: 1.e-4
+  pk_kmax: 1.e2
+  pk_npoints: 2000
+  plot_pk: False
+  plot_mvar: False
+  pk_file_name: camb_pk
+  mvar_file_name: camb_mvar
+  use_spherical_bessel: False
+
+Cosmology:
+  # Menon & Power 2024 (PASA), Sec. 2.1: Omega_b=0.0484, Omega_m=0.308,
+  # Omega_Lambda=0.692, h=0.678, sigma8=0.815, ns=0.968 (their stated
+  # Planck 2018 values). CAMB needs As, not sigma8, directly -- As below
+  # was solved for by exploiting sigma8^2 being exactly linear in As (a
+  # single reference CosmoData(redshift=[0.0]) run at a guessed As,
+  # rescaled -- sigma8 is a z=0 quantity by convention, evaluating at any
+  # other redshift gives the growth-suppressed amplitude there instead,
+  # not sigma8), verified to reproduce sigma8=0.815 to machine precision.
+  H0: 67.8
+  OmegaBar: 0.0484
+  OmegaM: 0.308
+  OmegaLambda: 0.692
+  OmegaK: 0.0
+  As: 2.0593818322270126e-9  # -> sigma8 = 0.815 (at z=0)
+  ns: 0.968
+  tau_reio: 0.0561
+  mnu: 0.0
+
+class:
+  output: mPk
+  P_k_max_1/Mpc: 1000.
+
+camb:
+
+user:
