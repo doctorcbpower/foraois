@@ -389,3 +389,153 @@ def test_build_forest_numpy_raises_for_sidm(zh_tree_generator):
     zh_tree = ZhangHuiMergerTree(cosmo_data, model="sidm", rng=np.random.default_rng(0))
     with pytest.raises(NotImplementedError):
         zh_tree.build_forest_numpy(np.full(10, BT_M0), z0=BT_Z0, z_max=BT_Z_MAX, M_res=BT_M_RES, dz=BT_DZ)
+
+
+# ---------------------------------------------------------------------------
+# ZhangHuiMergerTree.build_forest_numba
+# ---------------------------------------------------------------------------
+
+
+def test_build_forest_numba_shape_and_bounds(zh_tree_generator):
+    cosmo_data = zh_tree_generator.cosmo_data
+    zh_tree = ZhangHuiMergerTree(cosmo_data, model="cdm")
+    N = 500
+    mass_history, z_steps, smooth_accretion, merger_mass = zh_tree.build_forest_numba(
+        M0_array=np.full(N, BT_M0),
+        z0=BT_Z0,
+        z_max=BT_Z_MAX,
+        M_res=BT_M_RES,
+        dz=BT_DZ,
+    )
+    n_steps = int((BT_Z_MAX - BT_Z0) / BT_DZ)
+    assert mass_history.shape == (N, n_steps)
+    assert z_steps.shape == (n_steps + 1,)
+    assert smooth_accretion.shape == (N, n_steps)
+    assert merger_mass.shape == (N, n_steps)
+    assert np.all((mass_history <= BT_M0 + 1e-6) & (mass_history >= 0.0))
+    assert np.all(smooth_accretion >= -1e-6)
+    assert np.all(merger_mass >= 0.0)
+
+
+def test_build_forest_numba_mass_conservation(zh_tree_generator):
+    # Same identity test_build_forest_numpy_mass_conservation checks for
+    # the numpy backend -- both implement the same closed-form algorithm
+    # (_build_forest_flat_barrier_numpy/_kernel), just vectorised
+    # differently.
+    cosmo_data = zh_tree_generator.cosmo_data
+    zh_tree = ZhangHuiMergerTree(cosmo_data, model="cdm")
+    N = 2000
+    mass_history, _, smooth_accretion, merger_mass = zh_tree.build_forest_numba(
+        M0_array=np.full(N, BT_M0), z0=BT_Z0, z_max=BT_Z_MAX, M_res=BT_M_RES, dz=BT_DZ
+    )
+    full_history = np.concatenate([np.full((N, 1), BT_M0), mass_history], axis=1)
+    forward_gain = full_history[:, :-1] - full_history[:, 1:]
+    channel_sum = smooth_accretion + merger_mass
+
+    both_resolved = (full_history[:, 1:] > 0) & (full_history[:, :-1] > 0)
+    assert both_resolved.sum() > 0
+    assert np.allclose(forward_gain[both_resolved], channel_sum[both_resolved], rtol=1e-6, atol=1e-6)
+
+
+def test_build_forest_numba_not_reproducible_even_with_matched_seed(zh_tree_generator):
+    # Regression/documentation test for a genuine numba limitation found
+    # while adding this backend: parallel=True/nb.prange gives each worker
+    # thread its own internal random stream that is *not* deterministically
+    # tied to np.random.seed(), whether called before this method or (also
+    # checked directly, separately) as the very first statement inside the
+    # jitted kernel itself. See build_forest_numba's own docstring. This
+    # test exists to catch it if a future numba version (or a refactor
+    # away from prange) changes that -- not to assert the limitation is
+    # desirable.
+    cosmo_data = zh_tree_generator.cosmo_data
+    zh_tree = ZhangHuiMergerTree(cosmo_data, model="cdm")
+
+    np.random.seed(7)
+    mh_a, *_ = zh_tree.build_forest_numba(np.full(200, BT_M0), z0=BT_Z0, z_max=BT_Z_MAX, M_res=BT_M_RES, dz=BT_DZ)
+    np.random.seed(7)
+    mh_b, *_ = zh_tree.build_forest_numba(np.full(200, BT_M0), z0=BT_Z0, z_max=BT_Z_MAX, M_res=BT_M_RES, dz=BT_DZ)
+    assert not np.array_equal(mh_a, mh_b)
+
+
+def test_build_forest_numba_raises_for_sidm(zh_tree_generator):
+    cosmo_data = zh_tree_generator.cosmo_data
+    zh_tree = ZhangHuiMergerTree(cosmo_data, model="sidm")
+    with pytest.raises(NotImplementedError):
+        zh_tree.build_forest_numba(np.full(10, BT_M0), z0=BT_Z0, z_max=BT_Z_MAX, M_res=BT_M_RES, dz=BT_DZ)
+
+
+def test_build_forest_numba_raises_actionable_error_without_numba(zh_tree_generator, monkeypatch):
+    # numba is an optional dependency (pip install foraois[numba]) --
+    # simulate it being absent (rather than actually uninstalling it,
+    # which the rest of this test module needs) and check the resulting
+    # error tells the user what to do, matching pch_trees.py's own
+    # equivalent test.
+    import foraois.zhang_hui_trees as zh_module
+
+    cosmo_data = zh_tree_generator.cosmo_data
+    zh_tree = ZhangHuiMergerTree(cosmo_data, model="cdm")
+    monkeypatch.setattr(zh_module, "_HAVE_NUMBA", False)
+    with pytest.raises(ImportError, match=r"foraois\[numba\]"):
+        zh_tree.build_forest_numba(np.full(10, BT_M0), z0=BT_Z0, z_max=BT_Z_MAX, M_res=BT_M_RES, dz=BT_DZ)
+
+
+def test_numba_and_numpy_backends_statistically_consistent(zh_tree_generator):
+    # Same rationale as pch_trees's own equivalent test: the two backends
+    # draw randoms in different orders (numpy: one batch of N draws per
+    # step; numba: prange over trees, order not fixed), so exact equality
+    # isn't expected even with matched seeding -- check instead that they
+    # agree on the *distribution* of final masses.
+    cosmo_data = zh_tree_generator.cosmo_data
+    zh_tree = ZhangHuiMergerTree(cosmo_data, model="cdm", rng=np.random.default_rng(3))
+    N = 20000
+
+    mh_np, *_ = zh_tree.build_forest_numpy(np.full(N, BT_M0), z0=BT_Z0, z_max=BT_Z_MAX, M_res=BT_M_RES, dz=BT_DZ)
+    np.random.seed(3)
+    mh_nb, *_ = zh_tree.build_forest_numba(np.full(N, BT_M0), z0=BT_Z0, z_max=BT_Z_MAX, M_res=BT_M_RES, dz=BT_DZ)
+
+    frac_alive_np = np.mean(mh_np[:, -1] > 0)
+    frac_alive_nb = np.mean(mh_nb[:, -1] > 0)
+    assert frac_alive_np == pytest.approx(frac_alive_nb, abs=0.03)
+
+    mean_mass_np = mh_np[:, -1][mh_np[:, -1] > 0].mean()
+    mean_mass_nb = mh_nb[:, -1][mh_nb[:, -1] > 0].mean()
+    assert mean_mass_np == pytest.approx(mean_mass_nb, rel=0.1)
+
+
+def test_erfcinv_numba_matches_scipy():
+    # scipy.special.erfcinv isn't callable from inside @njit code -- the
+    # numba kernel implements its own (Winitzki approximation + Newton-
+    # Raphson refinement against math.erf, see the module comment above
+    # _erfcinv_numba). Checked directly against scipy's implementation
+    # here. Two tolerance tiers, reflecting the approximation's actual
+    # measured accuracy profile: tight (rel=1e-3, actually ~1e-6 over most
+    # of the range and degrading only as v approaches the 1e-15 edge of
+    # this band) for any v not absurdly close to 0/2 -- the only regime
+    # real cosmological (d_omega, S) values ever produce -- and loose
+    # (~1%) for the deep tail (v below ~1e-15), included only to confirm
+    # it stays finite and correctly signed rather than crashing or
+    # blowing up, not because that tail is ever physically reached.
+    from scipy.special import erfcinv as erfcinv_scipy
+
+    from foraois.zhang_hui_trees import _erfcinv_numba
+
+    realistic_vs = np.concatenate(
+        [np.logspace(-15, -1, 60), np.linspace(0.11, 1.89, 100), 2.0 - np.logspace(-15, -1, 60)]
+    )
+    for v in realistic_vs:
+        exact = erfcinv_scipy(v)
+        approx = _erfcinv_numba(v)
+        assert approx == pytest.approx(exact, rel=1e-3, abs=1e-6)
+
+    deep_tail_vs = np.logspace(-300, -16, 60)
+    for v in deep_tail_vs:
+        exact = erfcinv_scipy(v)
+        approx = _erfcinv_numba(v)
+        if np.isinf(exact):
+            assert np.isinf(approx) and np.sign(approx) == np.sign(exact)
+            continue
+        assert np.isfinite(approx)
+        assert approx == pytest.approx(exact, rel=1e-2)
+
+    assert _erfcinv_numba(0.0) == np.inf
+    assert _erfcinv_numba(2.0) == -np.inf

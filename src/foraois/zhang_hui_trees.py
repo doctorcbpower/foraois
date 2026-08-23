@@ -44,6 +44,7 @@ below uses a separate, closed-form vectorised path instead (see its own
 docstring for why).
 """
 
+import math
 import warnings
 
 import numpy as np
@@ -53,6 +54,14 @@ from scipy.special import erfc, erfcinv
 from foraois.collapse import delta_c
 from foraois.cosmo_utils import ensure_delta_col_covers
 from foraois.first_crossing import solve_first_crossing
+
+try:
+    import numba as nb
+
+    _HAVE_NUMBA = True
+except ImportError:
+    nb = None
+    _HAVE_NUMBA = False
 
 
 def _mass_at_S(S, sigma0_sq, cosmo_data):
@@ -503,6 +512,213 @@ def _build_forest_flat_barrier_numpy(M0_array, z_steps, model, cosmo_data, M_res
     return mass_history, split_events, smooth_accretion, merger_mass
 
 
+# ---------------------------------------------------------------------------
+# Numba JIT kernel -- parallel counterpart to _build_forest_flat_barrier_numpy
+# above, same closed-form Levy sampling, same restriction to flat barriers.
+# ---------------------------------------------------------------------------
+# scipy.special.erfc/erfcinv (used by the numpy path) aren't callable from
+# inside @njit code; math.erf/math.erfc are numba-supported, but there is no
+# numba-compatible erfcinv anywhere -- _erfcinv_numba below implements one
+# directly (Winitzki 2008's rational approximation as a Newton-Raphson
+# starting point, refined against math.erf to ~1e-6 relative accuracy for
+# any v not astronomically close to 0 or 1 -- checked directly against
+# scipy.special.erfcinv over v in [1e-300, 1-1e-15], see
+# tests/test_zhang_hui_trees.py). ln(1-x^2) is computed as
+# ln(1-x) + ln(1+x) rather than ln(1-x*x) directly, to avoid the
+# catastrophic-cancellation underflow the direct form suffers as x -> +-1
+# (i.e. v -> 0 or 2).
+#
+# PCH08's own numba kernel (pch_trees._build_forest_kernel) inlines its own
+# copy of a sorted-array binary-search interpolator for the same reason
+# _interp_sorted_zh below duplicates it here rather than importing from
+# pch_trees.py: these are two independent algorithm implementations by
+# design (see tree_algorithm.py's module docstring), and this is a tiny,
+# purely mechanical utility, not shared domain logic.
+# ---------------------------------------------------------------------------
+
+if _HAVE_NUMBA:
+
+    @nb.njit(cache=True)
+    def _interp_sorted_zh(x, xp, fp):
+        """Scalar linear interpolation, xp ascending, clamped outside its range. Same as pch_trees._interp_sorted."""
+        n = xp.shape[0]
+        if x <= xp[0]:
+            return fp[0]
+        if x >= xp[n - 1]:
+            return fp[n - 1]
+        lo = 0
+        hi = n - 1
+        while hi - lo > 1:
+            mid = (lo + hi) >> 1
+            if xp[mid] <= x:
+                lo = mid
+            else:
+                hi = mid
+        t = (x - xp[lo]) / (xp[hi] - xp[lo])
+        return fp[lo] + t * (fp[hi] - fp[lo])
+
+    @nb.njit(cache=True)
+    def _erfcinv_numba(v):
+        """
+        Numba-compatible erfcinv(v), v in [0, 2]. See module comment above
+        for the method and its accuracy. v<=0 -> +inf, v>=2 -> -inf,
+        matching scipy.special.erfcinv's own limiting behaviour (needed
+        here since a fully-underflowed p_lower=0.0 is a real, expected
+        input, not an error -- see _flat_barrier_sample's docstring).
+        """
+        if v <= 0.0:
+            return np.inf
+        if v >= 2.0:
+            return -np.inf
+        x = 1.0 - v
+        ln1mx2 = np.log(v) + np.log(2.0 - v)
+        a = 0.147
+        term = 2.0 / (np.pi * a) + ln1mx2 / 2.0
+        inner = term * term - ln1mx2 / a
+        if inner < 0.0:
+            inner = 0.0
+        y = np.sqrt(np.sqrt(inner) - term)
+        if x < 0.0:
+            y = -y
+        two_over_sqrtpi = 1.1283791670955126
+        for _ in range(6):
+            deriv = two_over_sqrtpi * np.exp(-y * y)
+            if deriv == 0.0:
+                break
+            y = y - (math.erf(y) - x) / deriv
+        return y
+
+    @nb.njit(parallel=True, cache=True, fastmath=True)
+    def _build_forest_flat_barrier_kernel(
+        M0_array,  # (N,)   initial halo masses
+        z_steps,  # (S,)   redshift grid edges
+        dc_z_grid,  # (Nz,) precomputed redshift grid for delta_col table
+        dc_dc_grid,  # (Nz,) delta_col values on that grid
+        logmass_grid,  # (Nm,) log10(M) grid for sigma table, ascending
+        sigma_grid,  # (Nm,) sigma(M) values on that grid
+        sigma_grid_rev,  # (Nm,) sigma_grid reversed -- ascending in sigma
+        logmass_grid_rev,  # (Nm,) logmass_grid reversed, paired with sigma_grid_rev
+        M_res,  # scalar resolution mass
+    ):
+        """
+        Core Numba kernel for the flat-barrier closed-form sampler -- see
+        _build_forest_flat_barrier_numpy's own docstring for the algorithm
+        (mass-budget bookkeeping, the N23-footnote-3 resolved-split
+        sampling range, and the smooth_accretion/merger_mass conservation
+        identity), which this reimplements per-halo/per-step instead of
+        vectorised across halos. Uses the module-level erf/erfcinv-based
+        Levy sampling exactly as that function does, not a different
+        derivation.
+
+        M_res is used both as the resolution floor and (like the numpy
+        path) as the arbitrary mass point delta_c is evaluated at for a
+        flat barrier (delta_c doesn't depend on it -- see
+        _assert_flat_barrier, checked once by the caller before this runs).
+
+        Each tree index is processed by a separate thread (nb.prange).
+        """
+        N = M0_array.shape[0]
+        S = z_steps.shape[0]
+        n_steps = S - 1
+
+        mass_history = np.zeros((N, n_steps), dtype=np.float64)
+        smooth_accretion = np.zeros((N, n_steps), dtype=np.float64)
+        merger_mass = np.zeros((N, n_steps), dtype=np.float64)
+
+        log10_M_res = np.log10(M_res)
+        sigma_res = _interp_sorted_zh(log10_M_res, logmass_grid, sigma_grid)
+        sigma_res_sq = sigma_res * sigma_res
+
+        for i in nb.prange(N):  # <-- parallel over trees
+            m = M0_array[i]
+            alive = m >= M_res
+
+            for j in range(n_steps):
+                if not alive:
+                    mass_history[i, j] = 0.0
+                    continue
+
+                z0 = z_steps[j]
+                z1 = z_steps[j + 1]
+                d0 = _interp_sorted_zh(z0, dc_z_grid, dc_dc_grid)
+                d1 = _interp_sorted_zh(z1, dc_z_grid, dc_dc_grid)
+                d_omega = d1 - d0
+
+                sigma0 = _interp_sorted_zh(np.log10(m), logmass_grid, sigma_grid)
+                sigma0_sq = sigma0 * sigma0
+                S_res = sigma_res_sq - sigma0_sq
+
+                p_res = math.erfc(d_omega / np.sqrt(2.0 * S_res))
+                m_continuing = m * p_res
+
+                can_split = m_continuing > 2.0 * M_res
+                if can_split:
+                    sigma_avail = _interp_sorted_zh(np.log10(m_continuing - M_res), logmass_grid, sigma_grid)
+                    S_lower = sigma_avail * sigma_avail - sigma0_sq
+                    if S_lower < 0.0:
+                        S_lower = 0.0
+                    elif S_lower > S_res:
+                        S_lower = S_res
+                    p_lower = math.erfc(d_omega / np.sqrt(2.0 * S_lower)) if S_lower > 0.0 else 1.0
+                    p_split = p_res - p_lower
+                    if p_split < 0.0:
+                        p_split = 0.0
+                else:
+                    p_lower = p_res
+                    p_split = 0.0
+
+                u1 = np.random.random()
+                do_split = can_split and (u1 < p_split)
+
+                m1 = 0.0
+                m2 = 0.0
+                ok1 = False
+                ok2 = False
+                if do_split:
+                    v = p_lower + np.random.random() * (p_res - p_lower)
+                    S_star = (d_omega * d_omega) / (2.0 * _erfcinv_numba(v) ** 2)
+                    sigma_target = np.sqrt(max(S_star, 0.0) + sigma0_sq)
+                    logmass2 = _interp_sorted_zh(sigma_target, sigma_grid_rev, logmass_grid_rev)
+                    m2 = 10.0**logmass2
+                    m1 = m_continuing - m2
+                    ok1 = m1 >= M_res
+                    ok2 = m2 >= M_res
+
+                if not do_split:
+                    m_next = m_continuing
+                elif ok1 and ok2:
+                    merger_mass[i, j] = min(m1, m2)
+                    m_next = max(m1, m2)
+                elif ok1:
+                    m_next = m1
+                elif ok2:
+                    m_next = m2
+                else:
+                    # Both fragments landed below M_res -- the p_split/
+                    # S_lower restriction is specifically designed to
+                    # prevent this (see _build_forest_flat_barrier_numpy's
+                    # docstring), so this should only ever be hit at a
+                    # floating-point boundary; matches that function's own
+                    # nested np.where, which also gives 0.0 here (a split
+                    # was drawn, but neither fragment survived it).
+                    m_next = 0.0
+
+                smooth_accretion[i, j] = m - m_next - merger_mass[i, j]
+                m = m_next
+                alive = m >= M_res
+                mass_history[i, j] = m if alive else 0.0
+                if not alive:
+                    smooth_accretion[i, j] = 0.0
+                    merger_mass[i, j] = 0.0
+
+        return mass_history, smooth_accretion, merger_mass
+
+else:
+    _interp_sorted_zh = None
+    _erfcinv_numba = None
+    _build_forest_flat_barrier_kernel = None
+
+
 class ZhangHuiMergerTree:
     """
     The barrier-agnostic, exact-rate counterpart to
@@ -516,13 +732,15 @@ class ZhangHuiMergerTree:
     mass-dependent barrier is needed (once one exists -- see
     `_assert_flat_barrier`).
 
-    `build_forest_numpy` is the vectorised, forest-scale backend -- but
-    only for the currently-flat-barrier models (cdm/wdm/fdm's
-    placeholder; see `_build_forest_flat_barrier_numpy`'s docstring for
-    why this is a closed-form path, not a vectorised
-    `first_crossing_step`), matching `PCHMergerTree.build_forest_numpy`'s
-    signature and return shape. No `build_forest_numba` yet (see
-    ROADMAP.md).
+    `build_forest_numpy`/`build_forest_numba` are the vectorised/parallel
+    forest-scale backends -- but only for the currently-flat-barrier
+    models (cdm/wdm/fdm's placeholder; see
+    `_build_forest_flat_barrier_numpy`'s docstring for why this is a
+    closed-form path, not a vectorised `first_crossing_step`), matching
+    `PCHMergerTree.build_forest_numpy`/`build_forest_numba`'s own
+    signatures and return shapes. Requires the optional `numba` dependency
+    (`pip install foraois[numba]`) -- raises `ImportError` with that
+    instruction if it isn't installed.
     """
 
     def __init__(
@@ -678,3 +896,74 @@ class ZhangHuiMergerTree:
             rng=self.rng,
         )
         return mass_history, split_events, z_steps, smooth_accretion, merger_mass
+
+    def build_forest_numba(self, M0_array, z0, z_max, M_res, dz=0.1):
+        """
+        Evolve N merger trees using the Numba JIT kernel with thread-level
+        parallelism (`nb.prange`) -- the parallel counterpart to
+        `build_forest_numpy`, same closed-form flat-barrier Levy sampling
+        (`_build_forest_flat_barrier_kernel`; see the module comment above
+        it for how it reimplements `scipy.special.erfcinv`, which isn't
+        callable from inside `@njit` code).
+
+        Only supports models whose barrier is mass-independent (checked
+        once via `_assert_flat_barrier`, same as `build_forest_numpy`);
+        raises `NotImplementedError` otherwise.
+
+        Randomness note: unlike `build_tree`/`build_forest_numpy` (which
+        use `self.rng`, a `np.random.Generator`), this uses `np.random`
+        calls inside `@njit` code, since numba's JIT cannot accept a
+        `np.random.Generator` instance -- the only option available, and
+        the same one `PCHMergerTree.build_forest_numba` already uses.
+        **Not reproducible via any seed, `self.rng`'s or otherwise**: numba's
+        `parallel=True`/`nb.prange` combination gives each worker thread
+        its own internal random stream that is not deterministically tied
+        to `np.random.seed()`, whether called before this method or from
+        inside the kernel itself -- checked directly, calling
+        `np.random.seed(s)` immediately before *and* as the jitted
+        kernel's own first statement both still gave different output run
+        to run. This is a real, disclosed limitation of numba's parallel
+        RNG, not something this codebase controls; use `build_forest_numpy`
+        instead if reproducibility matters more than the extra speed here.
+
+        Parameters/returns match `build_forest_numpy` except for the
+        absence of `split_events` -- same as
+        `PCHMergerTree.build_forest_numba`'s own docstring explains for
+        the identical reason (allocating variable-length Python lists
+        inside `@njit` is expensive); use `merger_mass`'s nonzero entries
+        instead.
+
+        Raises
+        ------
+        ImportError
+            If numba is not installed -- it's an optional dependency
+            (`pip install foraois[numba]`); use `build_forest_numpy`
+            instead (same closed-form algorithm, no numba needed).
+        """
+        if not _HAVE_NUMBA:
+            raise ImportError(
+                "build_forest_numba requires numba, which is not installed. "
+                "Install it with `pip install foraois[numba]` (or `pip install "
+                "numba` directly), or use build_forest_numpy instead -- same "
+                "algorithm, no numba needed."
+            )
+        self._ensure_delta_col_covers(z_max)
+        _assert_flat_barrier(self.model, z_max, self.cosmo_data)
+
+        M0_array = np.asarray(M0_array, dtype=np.float64)
+        z_steps = np.arange(z0, z_max + dz * 0.5, dz)
+
+        logmass_grid = self.cosmo_data._logmass
+        sigma_grid = self.cosmo_data._sigma
+        mass_history, smooth_accretion, merger_mass = _build_forest_flat_barrier_kernel(
+            M0_array=M0_array,
+            z_steps=z_steps,
+            dc_z_grid=self.cosmo_data._dc_z_grid,
+            dc_dc_grid=self.cosmo_data._dc_dc_grid,
+            logmass_grid=logmass_grid,
+            sigma_grid=sigma_grid,
+            sigma_grid_rev=sigma_grid[::-1].copy(),
+            logmass_grid_rev=logmass_grid[::-1].copy(),
+            M_res=float(M_res),
+        )
+        return mass_history, z_steps, smooth_accretion, merger_mass

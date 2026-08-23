@@ -63,6 +63,21 @@ def test_forest_numpy_reproducible_with_seed(tree_generator):
     assert np.array_equal(mh_a, mh_b)
 
 
+def test_forest_numba_not_reproducible_even_with_matched_seed(tree_generator):
+    # Documentation/regression test for a genuine numba limitation (see
+    # build_forest_numba's own docstring): parallel=True/nb.prange gives
+    # each worker thread its own internal random stream that is not
+    # deterministically tied to np.random.seed(), unlike build_forest_numpy
+    # above. This test exists to catch it if a future numba version (or a
+    # refactor away from prange) changes that -- not to assert the
+    # limitation is desirable.
+    np.random.seed(7)
+    mh_a, _, _, _ = tree_generator.build_forest_numba(M0_array=np.full(200, M0), z0=Z0, z_max=Z_MAX, M_res=M_RES, dz=DZ)
+    np.random.seed(7)
+    mh_b, _, _, _ = tree_generator.build_forest_numba(M0_array=np.full(200, M0), z0=Z0, z_max=Z_MAX, M_res=M_RES, dz=DZ)
+    assert not np.array_equal(mh_a, mh_b)
+
+
 def test_forest_numba_shape_and_bounds(tree_generator):
     N = 200
     mass_history, z_steps, smooth_accretion, merger_mass = tree_generator.build_forest_numba(

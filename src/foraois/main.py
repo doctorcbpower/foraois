@@ -49,8 +49,7 @@ def main():
             '"serial" (single-tree loop, for testing), '
             '"numpy" (vectorised, no extra deps, default), '
             '"numba" (JIT + parallel, fastest for large N, needs '
-            "`pip install foraois[numba]`; not available for --algorithm zhang-hui, "
-            "which has no build_forest_numba -- see ROADMAP.md)"
+            "`pip install foraois[numba]`)"
         ),
     )
     parser.add_argument(
@@ -206,18 +205,12 @@ def main():
     # ------------------------------------------------------------------
     # PCH08 / Zhang-Hui: both satisfy the same TreeAlgorithm interface
     # (build_tree/build_forest_numpy, identical signatures and return
-    # shapes -- see tree_algorithm.py), so the backend-dispatch logic
-    # below is shared between them. ZhangHuiMergerTree has no
-    # build_forest_numba (see ROADMAP.md) -- caught explicitly rather
-    # than left to an AttributeError.
+    # shapes -- see tree_algorithm.py), and both now also provide
+    # build_forest_numba, so the backend-dispatch logic below is shared
+    # between them unconditionally.
     # ------------------------------------------------------------------
-    if algorithm == "zhang-hui" and backend == "numba":
-        raise ValueError(
-            "--algorithm zhang-hui has no build_forest_numba backend yet "
-            "(see ROADMAP.md) -- use --backend serial or numpy instead."
-        )
 
-    # build_forest_numpy is cheap for both algorithms (closed-form for
+    # build_forest_numpy/build_forest_numba are cheap for both algorithms (closed-form for
     # Zhang-Hui, see above) so z_max=15/dz=0.005 is fine there; only
     # zhang-hui's *serial* build_tree needs the coarser parameters.
     z_max = zh_build_tree_z_max if (algorithm == "zhang-hui" and backend == "serial") else 15.0
@@ -307,7 +300,7 @@ def main():
         )
 
     elif backend == "numba":
-        # ---- Numba JIT + parallel (PCH08 only, see the check above) -----
+        # ---- Numba JIT + parallel -----------------------------------------
         M0_array = np.full(N, M0)
 
         # Warm-up / compile pass (small N so it's fast)

@@ -1058,6 +1058,16 @@ class PCHMergerTree:
         history) instead of post-processing ``mass_history`` by comparing
         consecutive columns.
 
+        **Not reproducible via any seed**, unlike ``build_forest_numpy``
+        (checked directly): numba's ``parallel=True``/``nb.prange``
+        combination gives each worker thread its own internal random
+        stream that is not deterministically tied to ``np.random.seed()``,
+        whether called before this method or as the jitted kernel's own
+        first statement. A real, disclosed limitation of numba's parallel
+        RNG, not something this codebase controls -- use
+        ``build_forest_numpy`` instead if reproducibility matters more
+        than the extra speed here.
+
         Raises
         ------
         ImportError

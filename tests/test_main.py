@@ -46,6 +46,7 @@ def _run(monkeypatch, tmp_path, extra_args):
         ("pch08", "numba"),
         ("zhang-hui", "serial"),
         ("zhang-hui", "numpy"),
+        ("zhang-hui", "numba"),
     ],
 )
 def test_cli_runs_without_error(monkeypatch, tmp_path, algorithm, backend):
@@ -54,11 +55,6 @@ def test_cli_runs_without_error(monkeypatch, tmp_path, algorithm, backend):
 
 def test_cli_constrained_runs_without_error(monkeypatch, tmp_path):
     _run(monkeypatch, tmp_path, ["--algorithm", "constrained", "--M1", "1e11", "--z1", "4.0"])
-
-
-def test_cli_zhang_hui_numba_rejected_with_clear_error(monkeypatch, tmp_path):
-    with pytest.raises(ValueError, match="build_forest_numba"):
-        _run(monkeypatch, tmp_path, ["--algorithm", "zhang-hui", "--backend", "numba"])
 
 
 def test_cli_constrained_rejects_M1_above_M0(monkeypatch, tmp_path):

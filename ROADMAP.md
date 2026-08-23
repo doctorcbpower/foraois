@@ -33,9 +33,3 @@ Known gaps and open questions, in no particular order.
   an *unconstrained* tree (not just the main branch); the constrained
   backend (`zhang_hui_constrained_trees.py`) doesn't yet have an equivalent
   -- it only tracks the main (running-maximum) branch.
-
-- **A numba backend for the exact Zhang-Hui algorithm.**
-  `ZhangHuiMergerTree.build_forest_numpy` already uses a closed-form solution
-  for the flat-barrier models (competitive with PCH08's own numpy backend),
-  but there's no JIT-compiled/parallel backend analogous to
-  `PCHMergerTree.build_forest_numba`.

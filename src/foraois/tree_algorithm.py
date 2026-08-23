@@ -12,11 +12,12 @@ return shape exactly, so this `Protocol` documents and type-checks an
 interface the two implementations already share.
 
 `build_forest_numba` and `build_full_tree` are deliberately *not* part of
-this Protocol -- `PCHMergerTree` has both, `ZhangHuiMergerTree` has
-neither (no numba backend, no full-branching-structure builder). They
-are real, useful capabilities, just not ones every backend is expected to
-provide -- callers that need them should check for the concrete class or
-use `hasattr`, not assume every `TreeAlgorithm` has them.
+this Protocol -- `PCHMergerTree` has both; `ZhangHuiMergerTree` has
+`build_forest_numba` too but not `build_full_tree` (no
+full-branching-structure builder). They are real, useful capabilities,
+just not ones every backend is expected to provide -- callers that need
+them should check for the concrete class or use `hasattr`, not assume
+every `TreeAlgorithm` has them.
 
 Uses `typing.Protocol` (structural typing) rather than an ABC both
 classes explicitly inherit from: `PCHMergerTree` and `ZhangHuiMergerTree`
