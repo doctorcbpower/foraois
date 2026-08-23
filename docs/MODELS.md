@@ -2,6 +2,8 @@
 
 This document lists the exact equations implemented in [`src/foraois/`](../src/foraois) and every config parameter that controls them. For module responsibilities and usage, see [README.md](../README.md). Wavenumbers `k` are in h/Mpc unless stated otherwise; masses in Msun/h; `h = H0/100`.
 
+Deliberately not split into a separate `ALGORITHMS.md`: this file is "what equation, from where" (the literature-fidelity reference); each module's own docstring is "why implemented this way" (design/architecture choices -- e.g. `pch_trees.py`'s fixed-`dz` vs. PCH08's own adaptive step, `zhang_hui_constrained_trees.py`'s running-maximum construction vs. a literal reading of N23's Appendix A4); [README.md](../README.md#testing)'s Testing section is "what's validated against what." Consolidating these would either duplicate content that then drifts out of sync, or replace three purpose-built references with one that serves all three purposes worse. For the eventual paper, cite this file for equations/parameters, the relevant module docstring for a design choice's rationale, and the Testing section for validation coverage.
+
 ## Cosmology and P(k) ([`cosmo_utils.py`](../src/foraois/cosmo_utils.py) -- `CosmoData`)
 
 Hubble parameter and matter density:
@@ -87,7 +89,7 @@ beta = ln(V(0.5)/V(qres)) / ln(0.5/qres)
 B    = V(0.5) / 0.5^beta
 mu   = alpha_h = |dlnsigma/dlnM|(M2/2)
 eta  = beta - 1 - gamma1*mu
-S_coeff = sqrt(2/pi) * B * alpha_h * G0 * 2^(mu*gamma1) * (delta_col(z)/sigma2)^gamma2 * (sigma(M2/2)/sigma2)^gamma1
+S_coeff = sqrt(2/pi) * B * alpha_h * G0 * 2^(-mu*gamma1) * (delta_col(z)/sigma2)^gamma2 * (sigma(M2/2)/sigma2)^gamma1
 Nupper  = S_coeff * dz(dt/dz factor) * (0.5^eta - qres^eta)/eta     (0 if M2 < 2*M_res)
 ```
 
@@ -146,7 +148,7 @@ Two backends, differing in generality vs. speed:
 
 **Resolved limitation (was open, closed via a literature re-read):** a drawn progenitor mass `M2` originally had no guaranteed lower bound on its complement (`M0*(1-F_zh) - M2`, the "continuing" branch) the way PCH08's `q`-range restriction guarantees both split fragments stay resolved -- this complement could land below `M_res`, or even go negative, in **over half of steps** in a direct check at `dz=0.2`. Checked directly against N23's own footnote 3: their progenitor mass `M'` is drawn from `[M_res, M-M_res]` -- bounded away from *both* ends -- which by construction keeps both `M'` and `M-M'` `>= M_res`. Both backends now draw from the matching restricted range (`first_crossing_step`'s `S_lower`/`p_split`) rather than the unrestricted `[0, S_res]` -- checked directly, `0` of `221` two-progenitor draws landed below `M_res` afterward. `smooth_accretion` is still computed as the conservation residual (`parent_mass - max(progenitors) - merger_mass` in `build_tree`; the array equivalent in `build_forest_numpy`), kept as a cheap consistency check, but now provably equals the simple `F_zh*M` formula rather than folding in a real leftover.
 
-Comparing CDM output against `PCHMergerTree` at matched `(M0, z0, z_max, M_res, dz)` on a real Planck cosmology (`scripts/validate_zhang_hui_vs_pch08.py`, `n_trees=20000`): survival fraction identical; mean surviving mass currently runs **~11.4% lower** than PCH08's (an initial ~21% dropped to ~4.4% once the grid-resolution bug was fixed, then to ~11.4% once the mass-budget/sampling-range bug above was *properly* fixed rather than just patched with a residual -- the fix removed a real upward bias, not noise) -- N23 explicitly do not expect exact agreement here (their unconstrained trees are not recalibrated against PCH08/N-body), so this is reported, not treated as a defect to eliminate.
+Comparing CDM output against `PCHMergerTree` at matched `(M0, z0, z_max, M_res, dz)` on a real Planck cosmology (`scripts/validate_zhang_hui_vs_pch08.py`, `n_trees=20000`, `dz=0.01` -- small enough that `Nupper` stays comfortably below 1 for both backends, see the `dz` caveat above): survival fraction identical; mean surviving mass currently runs **~12% higher** than PCH08's. N23 explicitly do not expect exact agreement here (their unconstrained trees are not recalibrated against PCH08/N-body), so this is reported, not treated as a defect to eliminate.
 
 ## Halo mass functions ([`mass_function_utils.py`](../src/foraois/mass_function_utils.py))
 

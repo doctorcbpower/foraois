@@ -249,6 +249,50 @@ def test_wdm_tree_building_unchanged_by_dm_model():
     assert np.all(mass_history >= 0.0)
 
 
+def test_wdm_tree_building_with_M_res_inside_suppression_scale():
+    # docs/MODELS.md's own caveat: "M_res should stay well above whatever
+    # suppression scale the chosen dm_model + window combination imposes:
+    # sigma(M) genuinely flattens out below it, and the PCH08 branching-
+    # rate algebra is poorly conditioned there." This was documented but
+    # not previously exercised by a test -- check it degrades *sensibly*
+    # (finite, non-negative, no crash) rather than silently producing NaN/
+    # negative masses or an unbounded/undefined branching rate when M_res
+    # is chosen deep inside the flat regime (dm_model_mass=1.0 keV already
+    # gives sigma(1e6)/sigma_CDM(1e6) < 0.8 per the convergence test above;
+    # M_res=1e5 here is another decade further into the suppressed tail).
+    pytest.importorskip("camb")
+    from foraois.pch_trees import PCHMergerTree
+
+    wdm_params = {
+        **CAMB_PARAMS,
+        "Code": {**CAMB_PARAMS["Code"], "dm_model": "wdm", "dm_model_mass": 1.0},
+    }
+    cosmo_wdm = CosmoData(wdm_params, redshift=[0.0])
+    tree_generator = PCHMergerTree(cosmo_wdm, wdm_params)
+
+    np.random.seed(0)
+    mass_history, _, z_steps, smooth_accretion, merger_mass = tree_generator.build_forest_numpy(
+        M0_array=np.full(200, 1e10),
+        z0=0.0,
+        z_max=3.0,
+        M_res=1e5,
+        dz=0.05,
+    )
+    assert mass_history.shape == (200, len(z_steps) - 1)
+    assert np.all(np.isfinite(mass_history))
+    assert np.all(mass_history >= 0.0)
+    assert np.all(np.isfinite(smooth_accretion)) and np.all(smooth_accretion >= -1e-6)
+    assert np.all(np.isfinite(merger_mass)) and np.all(merger_mass >= 0.0)
+    # Mass conservation must still hold exactly in this regime, same
+    # identity test_pch_trees.py checks for the ordinary (unsuppressed) case.
+    full_history = np.concatenate([np.full((200, 1), 1e10), mass_history], axis=1)
+    forward_gain = full_history[:, :-1] - full_history[:, 1:]
+    channel_sum = smooth_accretion + merger_mass
+    both_resolved = (full_history[:, 1:] > 0) & (full_history[:, :-1] > 0)
+    assert both_resolved.sum() > 0
+    assert np.allclose(forward_gain[both_resolved], channel_sum[both_resolved], rtol=1e-6, atol=1e-6)
+
+
 def test_fdm_power_spectrum_matches_cdm_at_large_scales():
     pytest.importorskip("camb")
 

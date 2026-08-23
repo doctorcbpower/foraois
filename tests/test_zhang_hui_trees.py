@@ -207,6 +207,50 @@ def test_build_tree_stops_below_resolution(zh_tree_generator):
             assert progenitor >= 1e10
 
 
+def _trees_equal(tree_a, tree_b):
+    if len(tree_a) != len(tree_b):
+        return False
+    for a, b in zip(tree_a, tree_b, strict=True):
+        if a.keys() != b.keys():
+            return False
+        for key in a:
+            if key == "progenitors":
+                if len(a[key]) != len(b[key]) or not np.allclose(a[key], b[key]):
+                    return False
+            elif a[key] != pytest.approx(b[key]):
+                return False
+    return True
+
+
+def test_build_tree_reproducible_with_same_rng(zh_tree_generator):
+    # Same pattern test_pch_trees.py uses for PCHMergerTree's numpy backend
+    # (test_forest_numpy_reproducible_with_seed), applied to
+    # ZhangHuiMergerTree.build_tree -- its rng is an explicit constructor
+    # argument (np.random.Generator) rather than global np.random state, so
+    # "same seed" here means constructing two generators with the same seed.
+    cosmo_data = zh_tree_generator.cosmo_data
+    zh_a = ZhangHuiMergerTree(cosmo_data, model="cdm", rng=np.random.default_rng(123), N_grid=BT_N_GRID)
+    zh_b = ZhangHuiMergerTree(cosmo_data, model="cdm", rng=np.random.default_rng(123), N_grid=BT_N_GRID)
+    tree_a = zh_a.build_tree(M0=BT_M0, z0=BT_Z0, z_max=BT_Z_MAX, M_res=BT_M_RES, dz=BT_DZ)
+    tree_b = zh_b.build_tree(M0=BT_M0, z0=BT_Z0, z_max=BT_Z_MAX, M_res=BT_M_RES, dz=BT_DZ)
+    assert _trees_equal(tree_a, tree_b)
+
+
+def test_build_tree_differs_with_different_rng(zh_tree_generator):
+    # Independent seeds should be independently valid (both still satisfy
+    # every structural invariant test_build_tree_structure/_mass_non_
+    # increasing check) but generally produce a different realization --
+    # this is the complementary check to same-rng reproducibility above,
+    # guarding against e.g. an rng argument silently not being threaded
+    # through to the actual sampling calls.
+    cosmo_data = zh_tree_generator.cosmo_data
+    zh_a = ZhangHuiMergerTree(cosmo_data, model="cdm", rng=np.random.default_rng(1), N_grid=BT_N_GRID)
+    zh_b = ZhangHuiMergerTree(cosmo_data, model="cdm", rng=np.random.default_rng(2), N_grid=BT_N_GRID)
+    tree_a = zh_a.build_tree(M0=BT_M0, z0=BT_Z0, z_max=BT_Z_MAX, M_res=BT_M_RES, dz=BT_DZ)
+    tree_b = zh_b.build_tree(M0=BT_M0, z0=BT_Z0, z_max=BT_Z_MAX, M_res=BT_M_RES, dz=BT_DZ)
+    assert not _trees_equal(tree_a, tree_b)
+
+
 def test_ensure_delta_col_covers_extends_table_when_needed(zh_tree_generator):
     cosmo_data = zh_tree_generator.cosmo_data
     zh_tree = ZhangHuiMergerTree(cosmo_data, model="cdm")

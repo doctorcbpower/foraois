@@ -152,6 +152,46 @@ def test_growth_history_raises_on_invalid_inputs(zh_tree_generator):
         constrained_branch_growth_history(1e14, 8.0, 1e12, 0.0, 1e10, cosmo_data)
 
 
+def test_growth_history_extends_delta_col_table_beyond_default_z_max(zh_tree_generator):
+    # CosmoData.precompute_delta_col_table's own default only tabulates out
+    # to z_max=15 (see cosmo_utils.py); _invert_z_for_delta extends it on
+    # demand (the same guard PCHMergerTree/ZhangHuiMergerTree's own
+    # _ensure_delta_col_covers uses -- see
+    # test_pch_trees.py::test_build_forest_numba_extends_delta_col_table_beyond_z15
+    # and test_zhang_hui_trees.py::test_ensure_delta_col_covers_extends_table_when_needed
+    # for the equivalent checks on those two backends). Not previously
+    # covered for the constrained-tree backend specifically.
+    cosmo_data = zh_tree_generator.cosmo_data
+    original_max = cosmo_data._dc_z_grid[-1]
+    assert original_max < 20.0  # sanity: the default really doesn't already cover this
+
+    z1 = 20.0
+    rng = np.random.default_rng(17)
+    history = constrained_branch_growth_history(
+        1e14,
+        0.0,
+        1e12,
+        z1,
+        1e10,
+        cosmo_data,
+        model="cdm",
+        dS=0.05,
+        rng=rng,
+    )
+    # The table must actually have been extended to cover z1 ...
+    assert cosmo_data._dc_z_grid[-1] >= z1
+    # ... and the branch must have genuinely reached the constraint out
+    # there, not silently frozen at the table's old boundary (the failure
+    # mode ensure_delta_col_covers's own docstring describes: a clamped
+    # delta_col(z) table makes d_omega identically 0 beyond it, freezing
+    # mass/redshift progress rather than erroring).
+    assert history[-1]["redshift"] == pytest.approx(z1)
+    assert history[-1]["mass"] == pytest.approx(1e12, rel=1e-6)
+    # At least one intermediate collapse event genuinely lies beyond the
+    # table's original z_max=15, not just the final pinned endpoint.
+    assert any(entry["redshift"] > original_max for entry in history[:-1])
+
+
 # ---------------------------------------------------------------------------
 # build_constrained_tree: grafts the constrained branch onto ordinary
 # unconstrained continuation.
@@ -189,6 +229,57 @@ def test_build_constrained_tree_structure_and_transition(zh_tree_generator):
     at_constraint = [e for e in tree if e["redshift"] == pytest.approx(8.0)]
     assert len(at_constraint) == 1
     assert at_constraint[0]["progenitors"] == [pytest.approx(1e12, rel=1e-6)]
+
+
+def _trees_equal(tree_a, tree_b):
+    if len(tree_a) != len(tree_b):
+        return False
+    for a, b in zip(tree_a, tree_b, strict=True):
+        if a.keys() != b.keys():
+            return False
+        for key in a:
+            if key == "progenitors":
+                if len(a[key]) != len(b[key]) or not np.allclose(a[key], b[key]):
+                    return False
+            elif a[key] != pytest.approx(b[key]):
+                return False
+    return True
+
+
+def test_build_constrained_tree_reproducible_with_same_rng(zh_tree_generator):
+    # Same pattern as test_pch_trees.py's PCHMergerTree reproducibility
+    # check and test_zhang_hui_trees.py's build_tree one, applied to
+    # build_constrained_tree -- both the constrained branch's own path
+    # simulation (rng passed to simulate_bridge_path) and the unconstrained
+    # continuation (rng passed through to a fresh ZhangHuiMergerTree) must
+    # be reproducible from the same rng, not just one half of the tree.
+    cosmo_data = zh_tree_generator.cosmo_data
+    args = (1e14, 0.0, 1e12, 8.0, 10.0, 1e10, cosmo_data)
+    kwargs = dict(model="cdm", dS=0.05, N_grid=60, dz=0.2)
+
+    tree_a = build_constrained_tree(*args, rng=np.random.default_rng(9), **kwargs)
+    tree_b = build_constrained_tree(*args, rng=np.random.default_rng(9), **kwargs)
+    assert _trees_equal(tree_a, tree_b)
+
+
+def test_build_constrained_tree_differs_with_different_rng(zh_tree_generator):
+    # Independent seeds should be independently valid (both still satisfy
+    # test_build_constrained_tree_structure_and_transition's own invariants
+    # -- monotonic redshifts, exact (M1, z1) transition point) but
+    # generally produce a different realization, both before and after z1.
+    cosmo_data = zh_tree_generator.cosmo_data
+    args = (1e14, 0.0, 1e12, 8.0, 10.0, 1e10, cosmo_data)
+    kwargs = dict(model="cdm", dS=0.05, N_grid=60, dz=0.2)
+
+    tree_a = build_constrained_tree(*args, rng=np.random.default_rng(1), **kwargs)
+    tree_b = build_constrained_tree(*args, rng=np.random.default_rng(2), **kwargs)
+    assert not _trees_equal(tree_a, tree_b)
+
+    # Both realizations still hit the exact constraint point.
+    for tree in (tree_a, tree_b):
+        at_constraint = [e for e in tree if e["redshift"] == pytest.approx(8.0)]
+        assert len(at_constraint) == 1
+        assert at_constraint[0]["progenitors"] == [pytest.approx(1e12, rel=1e-6)]
 
 
 def test_build_constrained_tree_schema_unified_before_and_after_z1(zh_tree_generator):

@@ -40,6 +40,7 @@ import numpy as np
 from scipy.optimize import brentq
 
 from foraois.collapse import delta_c
+from foraois.cosmo_utils import ensure_delta_col_covers
 from foraois.first_crossing_constrained import simulate_bridge_path
 from foraois.zhang_hui_trees import ZhangHuiMergerTree, _mass_at_S
 
@@ -156,6 +157,18 @@ def constrained_branch_growth_history(
         raise ValueError(f"M1={M1} must be < M0={M0}.")
     if z1 <= z0:
         raise ValueError(f"z1={z1} must be > z0={z0}.")
+
+    # Same guard PCHMergerTree/ZhangHuiMergerTree's own build_tree methods
+    # apply at their own entry points -- without it, delta_c(M1, z1, ...)
+    # below silently clamps to cosmo_data's default z_max=15 table whenever
+    # z1 > 15, computing the bridge's whole target barrier from a wrong,
+    # clamped delta_col(z1) instead of raising or extending (verified
+    # directly: ~31% error in delta_c at z1=20 with the default table
+    # unextended). _invert_z_for_delta's own lazy extension (below, for
+    # intermediate collapse events) isn't a substitute -- it may never fire
+    # if the running maximum reaches delta1 before needing any inversion
+    # past the table's current range, exactly as it doesn't here.
+    ensure_delta_col_covers(cosmo_data, z1)
 
     delta0_abs = float(delta_c(M0, z0, model, cosmo_data))
     delta1_abs = float(delta_c(M1, z1, model, cosmo_data))
