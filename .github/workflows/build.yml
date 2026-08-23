@@ -8,8 +8,20 @@ on:
 
 jobs:
   build:
-    name: Build package
+    name: Build package (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # Bounds of the supported range (pyproject.toml's requires-python)
+        # -- a pure-Python wheel doesn't vary by interpreter, so this
+        # checks "does build+install+import work on both ends," not "does
+        # every version produce a different artifact." ci.yml's full
+        # 3.11-3.13 x 3-OS matrix is what actually exercises the code.
+        python-version:
+          - "3.11"
+          - "3.13"
 
     steps:
       - name: Check out repository
@@ -18,7 +30,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
+          python-version: ${{ matrix.python-version }}
 
       - name: Install build tools
         run: |
@@ -47,6 +59,7 @@ jobs:
           /tmp/wheel-install-test/bin/foraois-run --help
 
       - name: Upload artifacts
+        if: matrix.python-version == '3.13'
         uses: actions/upload-artifact@v4
         with:
           name: python-package

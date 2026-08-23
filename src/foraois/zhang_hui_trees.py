@@ -51,6 +51,7 @@ from scipy.integrate import cumulative_trapezoid
 from scipy.special import erfc, erfcinv
 
 from foraois.collapse import delta_c
+from foraois.cosmo_utils import ensure_delta_col_covers
 from foraois.first_crossing import solve_first_crossing
 
 
@@ -570,16 +571,16 @@ class ZhangHuiMergerTree:
 
     def _ensure_delta_col_covers(self, z_max):
         """
-        Same guard as `PCHMergerTree._ensure_delta_col_covers` (see that
-        method's docstring for the silent-clamping failure mode this
-        avoids) -- applies equally here, since `draw_progenitor_mass_zh`
-        also reaches `cosmo_data.delta_col_at_z` indirectly, through
-        `collapse.delta_c_cdm`/`delta_c_wdm`.
+        Same guard as `PCHMergerTree._ensure_delta_col_covers` (see
+        cosmo_utils.ensure_delta_col_covers's docstring for the
+        silent-clamping failure mode this avoids) -- applies equally here,
+        since `draw_progenitor_mass_zh` also reaches
+        `cosmo_data.delta_col_at_z` indirectly, through
+        `collapse.delta_c_cdm`/`delta_c_wdm`. No cached grid copy to
+        refresh afterward, unlike PCHMergerTree's version -- this class
+        reads `cosmo_data.delta_col_at_z()` live instead.
         """
-        current_z_max = self.cosmo_data._dc_z_grid[-1]
-        if z_max <= current_z_max:
-            return
-        self.cosmo_data.precompute_delta_col_table(z_max=z_max)
+        ensure_delta_col_covers(self.cosmo_data, z_max)
 
     def build_tree(self, M0, z0, z_max, M_res, dz=0.1):
         """

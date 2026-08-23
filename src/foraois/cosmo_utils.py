@@ -901,3 +901,36 @@ class CosmoData:
             raise ValueError(f"Radius must be positive; received radius={radius}.")
         mean_density = self.cosmo_params["OmegaM"] * self.rhocrit0
         return (4.0 * np.pi / 3.0) * mean_density * radius**3
+
+
+def ensure_delta_col_covers(cosmo_data, z_max):
+    """
+    Extend cosmo_data's delta_col(z) table if z_max exceeds what's
+    currently tabulated -- shared by PCHMergerTree._ensure_delta_col_covers
+    and ZhangHuiMergerTree._ensure_delta_col_covers (each also does its own
+    bookkeeping afterward: PCHMergerTree refreshes its cached copy of the
+    grid arrays for the numba kernel, ZhangHuiMergerTree needs no such
+    refresh since it reads cosmo_data.delta_col_at_z() live instead of
+    caching the grids itself).
+
+    CosmoData.__init__ builds this table with its own default z_max=15
+    (see precompute_delta_col_table), independent of whatever z_max a
+    later build_tree/build_full_tree/build_forest_numpy/build_forest_numba
+    call actually needs. delta_col_at_z() looks the table up via
+    np.interp, which *silently clamps* to the table's boundary value for
+    z beyond it -- so requesting z_max > 15 without this check doesn't
+    error or warn, it just returns a flat delta_col(z)=delta_col(15) for
+    every z beyond 15. Since delta_col only ever enters the branching-rate
+    machinery via d_omega = delta_col(z1) - delta_col(z0), a flat/clamped
+    table makes d_omega identically 0 for any step entirely beyond the
+    table's range, which makes both the split probability (Nupper) and
+    the unresolved-accretion fraction (F) identically 0 too -- freezing
+    every tree's mass at whatever value it had at the table's edge, for
+    every subsequent (higher-z) step. This is a real, silent-failure-mode
+    bug this guard exists to close: any caller building trees to
+    z_max > 15 without it gets a silently corrupted tree.
+    """
+    current_z_max = cosmo_data._dc_z_grid[-1]
+    if z_max <= current_z_max:
+        return
+    cosmo_data.precompute_delta_col_table(z_max=z_max)

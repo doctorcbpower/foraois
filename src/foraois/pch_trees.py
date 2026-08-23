@@ -1,6 +1,8 @@
 import numpy as np
 from scipy import integrate
 
+from foraois.cosmo_utils import ensure_delta_col_covers
+
 try:
     import numba as nb
 
@@ -582,29 +584,13 @@ class PCHMergerTree:
     def _ensure_delta_col_covers(self, z_max):
         """
         Extend the delta_col(z) table if this tree-building call's z_max
-        exceeds what's currently tabulated.
-
-        CosmoData.__init__ builds this table with its own default z_max=15
-        (see precompute_delta_col_table), independent of whatever z_max a
-        later build_tree/build_full_tree/build_forest_numpy/build_forest_numba
-        call actually needs. delta_col_at_z() looks the table up via
-        np.interp, which *silently clamps* to the table's boundary value for
-        z beyond it -- so requesting z_max > 15 without this check doesn't
-        error or warn, it just returns a flat delta_col(z)=delta_col(15) for
-        every z beyond 15. Since delta_col only ever enters the branching-rate
-        machinery via d_omega = delta_col(z1) - delta_col(z0), a flat/clamped
-        table makes d_omega identically 0 for any step entirely beyond the
-        table's range, which makes both the split probability (Nupper) and
-        the unresolved-accretion fraction (F) identically 0 too -- freezing
-        every tree's mass at whatever value it had at the table's edge, for
-        every subsequent (higher-z) step. This is a real, silent-failure-mode
-        bug this guard exists to close: any caller building trees to
-        z_max > 15 without it gets a silently corrupted tree.
+        exceeds what's currently tabulated -- see
+        cosmo_utils.ensure_delta_col_covers's docstring for the
+        silent-clamping failure mode this avoids. Also refreshes this
+        class's own cached copy of the grid arrays (used by the numba
+        kernel, which needs raw arrays rather than a CosmoData method).
         """
-        current_z_max = self.cosmo_data._dc_z_grid[-1]
-        if z_max <= current_z_max:
-            return
-        self.cosmo_data.precompute_delta_col_table(z_max=z_max)
+        ensure_delta_col_covers(self.cosmo_data, z_max)
         self._dc_z_grid = self.cosmo_data._dc_z_grid
         self._dc_dc_grid = self.cosmo_data._dc_dc_grid
 

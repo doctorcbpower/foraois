@@ -52,6 +52,18 @@ class TreeAlgorithm(Protocol):
     "Return-value contract" for what `isinstance` alone doesn't verify.
     """
 
-    def build_tree(self, M0, z0, z_max, M_res, dz=0.1): ...
+    def build_tree(self, M0, z0, z_max, M_res, dz=0.1):
+        """
+        Grow one main-progenitor branch from (M0, z0) to z_max. Returns a
+        list of dicts (see module docstring's "Return-value contract").
+        """
+        ...
 
-    def build_forest_numpy(self, M0_array, z0, z_max, M_res, dz=0.1): ...
+    def build_forest_numpy(self, M0_array, z0, z_max, M_res, dz=0.1):
+        """
+        Vectorised: grow len(M0_array) independent main-progenitor
+        branches simultaneously. Returns the 5-tuple (mass_history,
+        split_events, z_steps, smooth_accretion, merger_mass) described in
+        the module docstring's "Return-value contract".
+        """
+        ...
