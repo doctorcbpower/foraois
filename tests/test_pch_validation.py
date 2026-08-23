@@ -15,7 +15,7 @@ import numpy as np
 import pytest
 
 from foraois import diagnostics
-from foraois.pch_trees import _build_j_table
+from foraois.pch_trees import _build_j_table, _rejection_ratio
 
 
 def test_j_table_matches_closed_form_at_gamma1_zero():
@@ -30,6 +30,67 @@ def test_j_table_positive_and_increasing_for_pch08_gamma1():
     u_grid, J = _build_j_table(0.38, n_grid=100)
     assert np.all(J >= 0)
     assert np.all(np.diff(J) >= 0)
+
+
+def test_accepted_rate_matches_eq1_3_6_7_directly(tree_generator):
+    # Regression test for a real normalization bug: _branching_rate_terms'
+    # S_coeff previously had G0 * 2^(+mu*gamma1) instead of PCH08's own
+    # eq. 12, G0/2^(mu*gamma1) (confirmed against the paper's raw LaTeX
+    # source, \frac{G_0}{2^{\mu\gamma_1}}) -- since R(q) (eq. 13)
+    # independently contributes another +2^(mu*gamma1) meant to *cancel*
+    # against S(q)'s, the wrong sign made them add instead, inflating the
+    # accepted rate by 2^(2*mu*gamma1).
+    #
+    # This test deliberately does NOT reuse S_coeff/eta/beta/mu/B at all --
+    # it recomputes the target density straight from PCH08's eq. 1-3 (the
+    # unperturbed conditional mass function, converted to dN/dq, including
+    # eq. 3's own M2/M1 factor) times eq. 6-7's G-modifier, entirely
+    # independently of the S(q)/R(q) envelope-and-rejection bookkeeping.
+    # diagnostics.true_split_probability doesn't catch this class of bug
+    # because it re-derives its own "true" target from this same S_coeff --
+    # it validates that sampling matches the code's own intended target,
+    # not that the target matches the paper.
+    cosmo_data = tree_generator.cosmo_data
+    M2, M_res, delta0, d_omega = 1e12, 1e10, 1.68, 0.01
+    G0, gamma1, gamma2 = tree_generator.G0, tree_generator.gamma1, tree_generator.gamma2
+
+    terms = tree_generator.branching_rate_terms(M2, M_res, delta0, d_omega)
+    sigma2 = terms["sigma2"]
+
+    for q in [0.05, 0.15, 0.3, 0.45]:
+        sigma1_q = float(cosmo_data.sigma_at_logmass(np.log10(q * M2)))
+        alpha1_q = float(cosmo_data.dlogsigma_at_logmass(np.log10(q * M2)))
+        V_q = sigma1_q**2 / (sigma1_q**2 - sigma2**2) ** 1.5
+
+        # eq. 1-3: dN/dq = [sqrt(2/pi) * V(q) * d_omega * alpha1(q)] / q^2
+        # (eq. 3's M2/M1 factor becomes the 1/q^2 once converted from
+        # dN/dM1 to dN/dq -- see the derivation in this test's own commit
+        # message / the accompanying audit writeup).
+        # eq. 6-7: times G0 * (sigma1(q)/sigma2)^gamma1 * (delta0/sigma2)^gamma2.
+        target = (
+            np.sqrt(2.0 / np.pi)
+            * V_q
+            * d_omega
+            * alpha1_q
+            / q**2
+            * G0
+            * (sigma1_q / sigma2) ** gamma1
+            * (delta0 / sigma2) ** gamma2
+        )
+
+        R_q = float(
+            _rejection_ratio(
+                np.asarray(q),
+                np.asarray(M2),
+                terms,
+                cosmo_data.sigma_at_logmass,
+                cosmo_data.dlogsigma_at_logmass,
+                gamma1,
+            )
+        )
+        accepted_rate = terms["S_coeff"] * terms["d_omega"] * q ** (terms["eta"] - 1.0) * R_q
+
+        assert accepted_rate == pytest.approx(target, rel=1e-8)
 
 
 def test_expected_splits_decreases_with_finer_dz(tree_generator):

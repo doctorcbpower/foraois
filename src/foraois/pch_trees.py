@@ -93,12 +93,28 @@ def _branching_rate_terms(M2, M_res, sigma_fn, alpha_fn, delta0, d_omega, G0, ga
     mu = alpha_h  # gamma1 >= 0 branch (eq. A8)
     eta = beta - 1.0 - gamma1 * mu
 
+    # PCH08 eq. 12: S(q) = sqrt(2/pi)*B*alpha_h*q^(eta-1) * [G0/2^(mu*gamma1)]
+    # * (delta/sigma2)^gamma2 * (sigma_h/sigma2)^gamma1 -- G0 is *divided* by
+    # 2^(mu*gamma1) (confirmed against the paper's raw LaTeX source,
+    # \frac{G_0}{2^{\mu\gamma_1}}), not multiplied. This factor is meant to
+    # cancel against R(q)'s own +2^(mu*gamma1) (eq. 13's (2q)^mu term,
+    # raised to gamma1) in the product S(q)*R(q) -- verified by expanding
+    # S(q)*R(q) against eq. 1-3/6-7's original (unperturbed-EPS x G-modifier)
+    # target density: the two factors must have opposite sign to cancel,
+    # leaving no explicit 2^(mu*gamma1) dependence in the true target.
+    # Multiplying instead of dividing here left them adding instead of
+    # cancelling, inflating the accepted merger rate by 2^(2*mu*gamma1) --
+    # a real, undetected bug until this term was checked against eq. 12's
+    # own raw LaTeX source rather than trusted from memory (see
+    # tests/test_pch_validation.py's independent-of-S(q)/R(q) regression
+    # test, which recomputes the target density straight from eq. 1-3/6-7
+    # rather than re-using this function's own S_coeff/eta/beta machinery).
     S_coeff = (
         np.sqrt(2.0 / np.pi)
         * B
         * alpha_h
         * G0
-        * (2.0 ** (mu * gamma1))
+        * (2.0 ** (-mu * gamma1))
         * (delta0 / sigma2) ** gamma2
         * (sigma_h / sigma2) ** gamma1
     )
@@ -246,12 +262,14 @@ if _HAVE_NUMBA:
                     mu = alpha_h  # gamma1 >= 0 branch (eq. A8)
                     eta = beta - 1.0 - gamma1 * mu
 
+                    # See _branching_rate_terms's own comment on this
+                    # line -- eq. 12 divides G0 by 2^(mu*gamma1).
                     S_coeff = (
                         np.sqrt(2.0 / np.pi)
                         * B
                         * alpha_h
                         * G0
-                        * (2.0 ** (mu * gamma1))
+                        * (2.0 ** (-mu * gamma1))
                         * (d0 / sigma2) ** gamma2
                         * (sigma_h / sigma2) ** gamma1
                     )
