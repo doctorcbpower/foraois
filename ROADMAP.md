@@ -43,3 +43,8 @@ Known gaps and open questions, in no particular order.
 - **CLI coverage.** `main.py`'s command-line interface currently only drives
   `PCHMergerTree`. `ZhangHuiMergerTree` and the constrained-tree backend are
   Python-API-only.
+
+- **`mode="user"` cosmology backend.** Supplying your own tabulated `P(k)`
+  without CLASS/CAMB installed is not implemented -- `CosmoData.get_power_spectrum()`
+  raises `NotImplementedError` for this mode. `mode="class"`/`mode="camb"`
+  are the only working options today.

@@ -11,7 +11,7 @@ class MassFunctions:
         if redshift is None:
             redshift = [0.0]
         self.redshift = np.asarray(redshift)
-        if np.any(self.redshift) < 0:
+        if np.any(self.redshift < 0):
             raise ValueError("Redshift must be a non-negative float or array of non-negative floats.")
         self.cosmo_data = cosmo_data
         self.rhomean = cosmo_data.get_omega_matter(redshift) * 2.7755e11
@@ -44,26 +44,31 @@ class MassFunctions:
         _, _, delta_col = self.cosmo_data.get_linear_growth_and_collapse(redshift)
         return delta_col / sigma_vals
 
-    """
-     Assume that the mass function can be written in the form,
-          n(M,z) = rho_mean/M**2 x f_XX(nu) x |dln nu/dln M|
-     where 
-          n is the comoving number density
-          M is halo mass, 
-          rho_mean is the cosmic mean density,
-          nu is delta_col/sigma(M), and
-          f_XX(nu) is the multiplicity function that captures the specific parameterisation (e.g. 
-          Press-Schechter, Sheth-Tormen, etc...)
-     Because 
-          nu=delta_col/sigma(M), 
-     it follows that 
-          dln nu = - dln sigma. 
-     This means that we can use the expression for dln sigma/dln M directly.
-     """
-
     def get_massfunc(self, redshift, mass_function_type="press_schechter"):
         """
-        Computes the mass function at a given redshift, for a given parameterisation.
+        Compute the halo mass function dn/dlogM at a given redshift.
+
+        Assumes the mass function can be written in the form
+
+            n(M,z) = rho_mean/M**2 * f_XX(nu) * |dln nu/dln M|
+
+        where n is the comoving number density, M is halo mass, rho_mean
+        is the cosmic mean density, nu = delta_col/sigma(M), and f_XX(nu)
+        is the multiplicity function for the chosen parameterisation
+        (Press-Schechter or Sheth-Tormen). Since nu = delta_col/sigma(M),
+        dln nu = -dln sigma, so |dln nu/dln M| = |dln sigma/dln M|.
+
+        Parameters
+        ----------
+        redshift : float
+        mass_function_type : {"press_schechter", "sheth_tormen"}
+
+        Returns
+        -------
+        logmass : np.ndarray
+            log10(M) grid the mass function is evaluated on, Msun/h.
+        dndlogm : np.ndarray
+            n(M,z) at each logmass grid point.
         """
         redshift = np.atleast_1d(redshift)
         if np.any(redshift < 0):
@@ -76,6 +81,10 @@ class MassFunctions:
             fnu = self.fps(masses, redshift)
         elif mass_function_type == "sheth_tormen":
             fnu = self.fst(masses, redshift)
+        else:
+            raise ValueError(
+                f"Unknown mass_function_type={mass_function_type!r} (supported: 'press_schechter', 'sheth_tormen')."
+            )
 
         dlnnu_dlnm = self.dlnnu_dlnm(masses, redshift)
 
@@ -112,11 +121,11 @@ class MassFunctions:
         """
         masses = np.atleast_1d(mass)
         if np.any(masses <= 0):
-            return ValueError("Cannot have masses less than or equal to zero")
+            raise ValueError("Cannot have masses less than or equal to zero")
 
         redshifts = np.atleast_1d(redshift)
         if np.any(redshifts < 0):
-            return ValueError("Cannot have redshifts less than zero")
+            raise ValueError("Cannot have redshifts less than zero")
 
         nu = self._get_nu(masses, redshift)
         nuprime = 0.84 * nu
@@ -139,10 +148,10 @@ class MassFunctions:
         """
         masses = np.atleast_1d(mass)
         if np.any(masses <= 0):
-            return ValueError("Cannot have masses less than or equal to zero")
+            raise ValueError("Cannot have masses less than or equal to zero")
 
         redshifts = np.atleast_1d(redshift)
         if np.any(redshifts < 0):
-            return ValueError("Cannot have redshifts less than zero")
+            raise ValueError("Cannot have redshifts less than zero")
 
         return np.abs(self._get_dlogsigma_dlogm(masses))

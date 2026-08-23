@@ -48,6 +48,8 @@ pip install -e .[camb]    # pip-installable
 
 (A `user` mode for supplying your own tabulated `P(k)` without either dependency is planned but not yet implemented -- see `CosmoData.get_power_spectrum()`.)
 
+The example configs under `config/` (used throughout this README and the demo notebook) are part of the git checkout, not shipped with the package itself -- the commands below assume you're running from the repository root. Not yet published to PyPI.
+
 ## Quick start
 
 **PCH08, via the CLI** -- the fastest way to generate a large forest of trees:

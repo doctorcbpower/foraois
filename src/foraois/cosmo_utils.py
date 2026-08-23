@@ -360,7 +360,11 @@ class CosmoData:
             pk_data["Pk"] = pk_data["Pk"].reshape(1, -1)
 
         elif self.mode == "user":
-            raise NotImplementedError("User-defined cosmology mode is not implemented yet.")
+            raise NotImplementedError(
+                "mode='user' (supplying your own tabulated P(k) without CLASS/CAMB) "
+                "is not implemented yet -- use mode='class' or mode='camb' instead "
+                "(see ROADMAP.md)."
+            )
         else:
             raise ValueError(f"Unknown mode '{self.mode}'.")
 

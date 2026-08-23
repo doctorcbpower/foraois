@@ -11,8 +11,16 @@ def get_params(file_path):
     Returns:
     dict: A dictionary containing the run parameters.
     """
-    with open(file_path) as file:
-        params = yaml.safe_load(file)
+    try:
+        with open(file_path) as file:
+            params = yaml.safe_load(file)
+    except FileNotFoundError:
+        raise FileNotFoundError(
+            f"Parameters file '{file_path}' not found (resolved relative to the "
+            "current working directory). The example configs under config/ are "
+            "part of the git checkout, not the installed package -- run from the "
+            "repository root, or pass an absolute path."
+        ) from None
     if not params:
         raise ValueError(f"Parameters file '{file_path}' is empty or invalid.")
     if not isinstance(params, dict):
