@@ -99,6 +99,7 @@ class CosmoData:
         redshift=None,
         class_output="mPk",
         class_pk_max_1_per_mpc=1000.0,
+        pk_file=None,
     ):
         """
         Construct a ``CosmoData`` directly from cosmological-parameter
@@ -118,19 +119,22 @@ class CosmoData:
             Matter, baryon, and curvature density parameters today
             (dimensionless). ``OmegaLambda`` is derived as ``1 - OmegaM``.
         As : float
-            Primordial scalar power spectrum amplitude.
+            Primordial scalar power spectrum amplitude. Unused (any value
+            works) if ``mode="user"``, since P(k) is supplied directly
+            rather than generated from primordial parameters.
         ns : float
-            Scalar spectral index.
+            Scalar spectral index. Unused if ``mode="user"`` (see ``As``).
         tau : float
-            Reionization optical depth.
+            Reionization optical depth. Unused if ``mode="user"`` (see ``As``).
         mnu : float
             Sum of neutrino masses, eV.
         num_massive_neutrinos : int
             Number of massive neutrino species (CAMB only).
-        mode : {"camb", "class"}
+        mode : {"camb", "class", "user"}
             Linear power spectrum backend. ``"camb"`` (default) is
             pip-installable (``pip install foraois[camb]``); ``"class"``
-            requires ``classy`` (``pip install foraois[class]``).
+            requires ``classy`` (``pip install foraois[class]``); ``"user"``
+            needs no extra dependency at all, but requires ``pk_file``.
         dm_model : {"cdm", "wdm", "fdm"}
             Dark matter model; see ``foraois.transfer_functions``.
         dm_model_mass : float, optional
@@ -153,11 +157,23 @@ class CosmoData:
             Passed through to ``CosmoData.__init__``. Default ``[0.0]``.
         class_output, class_pk_max_1_per_mpc :
             CLASS-specific settings, only used if ``mode="class"``.
+        pk_file : str, optional
+            Path to a two-column (k [h/Mpc], P(k) [(Mpc/h)^3]) text table,
+            required if ``mode="user"`` -- see
+            ``CosmoData._load_user_power_spectrum``'s docstring for the
+            exact file format and interpolation behaviour.
 
         Returns
         -------
         CosmoData
         """
+        if mode == "class":
+            mode_block = {"output": class_output, "P_k_max_1/Mpc": class_pk_max_1_per_mpc}
+        elif mode == "user":
+            mode_block = {"pk_file": pk_file}
+        else:
+            mode_block = {}
+
         raw = {
             "Run": {
                 "mode": mode,
@@ -181,7 +197,7 @@ class CosmoData:
                 "mnu": mnu,
                 "num_massive_neutrinos": num_massive_neutrinos,
             },
-            mode: ({"output": class_output, "P_k_max_1/Mpc": class_pk_max_1_per_mpc} if mode == "class" else {}),
+            mode: mode_block,
         }
         run_params = io.params_from_dict(raw, source="CosmoData.from_params() arguments")
         return cls(run_params, redshift=redshift)
@@ -494,17 +510,75 @@ class CosmoData:
             pk_data["Pk"] = pk_data["Pk"].reshape(1, -1)
 
         elif self.mode == "user":
-            raise NotImplementedError(
-                "mode='user' (supplying your own tabulated P(k) without CLASS/CAMB) "
-                "is not implemented yet -- use mode='class' or mode='camb' instead "
-                "(see ROADMAP.md)."
-            )
+            pk_data["k"], pk_data["Pk"] = self._load_user_power_spectrum(log10k)
         else:
             raise ValueError(f"Unknown mode '{self.mode}'.")
 
         pk_data["Pk"] = pk_data["Pk"] * self._dm_transfer_function(pk_data["k"])[None, :] ** 2
 
         return pk_data
+
+    def _load_user_power_spectrum(self, log10k):
+        """
+        Load a user-supplied linear P(k) table (mode="user") and log-log
+        interpolate it onto the pk_kmin..pk_kmax grid (log10k) the
+        class/camb branches of get_power_spectrum() also use, so
+        downstream code (sigma(M), etc.) never needs to know which
+        backend produced P(k).
+
+        The table (run_params['USER']['pk_file']) must be a plain text
+        file with two whitespace/comma-separated columns, no header:
+        k (h/Mpc), P(k) ((Mpc/h)^3) -- the same convention CLASS/CAMB
+        results are already put in elsewhere in this file. Interpolated
+        linearly in log10(k)/log10(P(k)), appropriate for a P(k) that is
+        smooth and positive over many decades in k, as every physical
+        linear power spectrum is.
+
+        Requesting k outside the table's own tabulated range raises
+        rather than extrapolating: unlike delta_col_at_z's np.interp-
+        based clamping (see ensure_delta_col_covers's docstring for the
+        silent-failure-mode bug that one caused), there is no automatic
+        "extend the table" fallback possible here -- extending a
+        *measured/supplied* P(k) table needs new data, not more
+        computation -- so failing clearly is the only honest option;
+        widen pk_kmin/pk_kmax or the pk_file's own range instead.
+
+        Returns
+        -------
+        k : np.ndarray, shape (len(log10k),), h/Mpc
+        Pk : np.ndarray, shape (1, len(log10k)), (Mpc/h)^3
+        """
+        pk_file = self.run_params.get("USER", {}).get("pk_file")
+        if not pk_file:
+            raise ValueError(
+                "mode='user' requires run_params['USER']['pk_file'] (a path to a "
+                "k, P(k) table) -- see docs/MODELS.md's config reference."
+            )
+        table = np.loadtxt(pk_file)
+        if table.ndim != 2 or table.shape[1] != 2:
+            raise ValueError(f"pk_file={pk_file!r} must be a two-column (k, P(k)) table; got shape {table.shape}.")
+        k_table, Pk_table = table[:, 0], table[:, 1]
+        if np.any(k_table <= 0) or np.any(Pk_table <= 0):
+            raise ValueError(
+                f"pk_file={pk_file!r}: k and P(k) must both be strictly positive "
+                "(this method interpolates in log-log space)."
+            )
+
+        k = 10**log10k
+        k_min_table, k_max_table = k_table.min(), k_table.max()
+        if k.min() < k_min_table or k.max() > k_max_table:
+            raise ValueError(
+                f"pk_file={pk_file!r} only covers k in [{k_min_table:.3e}, {k_max_table:.3e}] h/Mpc, "
+                f"but pk_kmin/pk_kmax requests [{k.min():.3e}, {k.max():.3e}] h/Mpc -- widen the table "
+                "or narrow pk_kmin/pk_kmax in the config."
+            )
+
+        order = np.argsort(k_table)
+        log_interp = interpolate.interp1d(
+            np.log10(k_table[order]), np.log10(Pk_table[order]), kind="linear", bounds_error=True
+        )
+        Pk = 10 ** log_interp(np.log10(k))
+        return k, Pk.reshape(1, -1)
 
     def _dm_transfer_function(self, k):
         """

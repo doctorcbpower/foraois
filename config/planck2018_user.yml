@@ -1,0 +1,27 @@
+Run:
+  mode: user
+  pk_kmin: 1.e-4
+  pk_kmax: 1.e2
+  pk_npoints: 2000
+  plot_pk: False
+  plot_mvar: False
+
+Cosmology:
+  H0: 67.556
+  OmegaBar: 0.048275
+  OmegaM: 0.3120456
+  OmegaK: 0.0
+  # As/ns/tau_reio are required fields but unused for mode="user" -- P(k)
+  # is supplied directly via user.pk_file, not generated from these.
+  As: 2.215e-9
+  ns: 0.9619
+  tau_reio: 0.0925
+  mnu: 0.0
+
+user:
+  # Two-column (k [h/Mpc], P(k) [(Mpc/h)^3]) text table, no CLASS/CAMB
+  # needed. example_user_pk.txt here was itself generated via CAMB for
+  # this same cosmology (see docs/MODELS.md) -- a realistic illustration,
+  # not a substitute for running your own Boltzmann code or simulation
+  # pipeline's P(k) output.
+  pk_file: config/example_user_pk.txt

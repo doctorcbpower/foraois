@@ -433,3 +433,144 @@ def test_from_params_wdm_wiring():
     )
     assert cosmo.run_params["dm_model"] == "wdm"
     assert cosmo.run_params["dm_model_mass"] == pytest.approx(3.0)
+
+
+# ---------------------------------------------------------------------------
+# mode="user" -- tabulated P(k) with no CLASS/CAMB dependency.
+# ---------------------------------------------------------------------------
+
+
+def _write_pk_table(path, k, Pk):
+    np.savetxt(path, np.column_stack([k, Pk]))
+    return str(path)
+
+
+def test_user_mode_loads_and_interpolates_table(tmp_path):
+    from foraois.cosmo_utils import CosmoData
+
+    k_table = np.logspace(-4, 2, 3000)
+    Pk_table = 2.0e4 * k_table**-2.0
+    pk_file = _write_pk_table(tmp_path / "pk.txt", k_table, Pk_table)
+
+    cosmo = CosmoData.from_params(
+        H0=67.66,
+        OmegaM=0.3111,
+        OmegaBar=0.049,
+        As=2.1e-9,
+        ns=0.9665,
+        tau=0.056,
+        mode="user",
+        pk_file=pk_file,
+        pk_kmin=1e-3,
+        pk_kmax=10.0,
+        pk_npoints=500,
+    )
+    pk_data = cosmo.get_power_spectrum()
+    assert pk_data["Pk"].shape == (1, 500)
+    # Interpolated values should match the analytic table closely (log-log
+    # linear interpolation of an exact power law is exact up to roundoff).
+    expected = 2.0e4 * pk_data["k"] ** -2.0
+    assert np.allclose(pk_data["Pk"][0], expected, rtol=1e-3)
+
+
+def test_user_mode_requires_pk_file():
+    from foraois.cosmo_utils import CosmoData
+
+    cosmo = CosmoData.from_params(H0=67.66, OmegaM=0.3111, OmegaBar=0.049, As=2.1e-9, ns=0.9665, tau=0.056, mode="user")
+    with pytest.raises(ValueError, match="pk_file"):
+        cosmo.get_power_spectrum()
+
+
+def test_user_mode_rejects_k_range_narrower_than_requested(tmp_path):
+    from foraois.cosmo_utils import CosmoData
+
+    k_table = np.logspace(-2, 1, 500)  # narrower than the requested pk_kmin/pk_kmax below
+    Pk_table = 1.0e4 * k_table**-2.0
+    pk_file = _write_pk_table(tmp_path / "pk.txt", k_table, Pk_table)
+
+    cosmo = CosmoData.from_params(
+        H0=67.66,
+        OmegaM=0.3111,
+        OmegaBar=0.049,
+        As=2.1e-9,
+        ns=0.9665,
+        tau=0.056,
+        mode="user",
+        pk_file=pk_file,
+        pk_kmin=1e-4,
+        pk_kmax=1e2,
+    )
+    with pytest.raises(ValueError, match="only covers k in"):
+        cosmo.get_power_spectrum()
+
+
+def test_user_mode_rejects_non_positive_values(tmp_path):
+    from foraois.cosmo_utils import CosmoData
+
+    k_table = np.linspace(-1.0, 10.0, 50)  # includes k <= 0
+    Pk_table = np.linspace(1.0, 100.0, 50)
+    pk_file = _write_pk_table(tmp_path / "pk.txt", k_table, Pk_table)
+
+    cosmo = CosmoData.from_params(
+        H0=67.66,
+        OmegaM=0.3111,
+        OmegaBar=0.049,
+        As=2.1e-9,
+        ns=0.9665,
+        tau=0.056,
+        mode="user",
+        pk_file=pk_file,
+        pk_kmin=1e-2,
+        pk_kmax=5.0,
+    )
+    with pytest.raises(ValueError, match="strictly positive"):
+        cosmo.get_power_spectrum()
+
+
+def test_user_mode_rejects_wrong_table_shape(tmp_path):
+    from foraois.cosmo_utils import CosmoData
+
+    pk_file = tmp_path / "pk.txt"
+    np.savetxt(pk_file, np.array([1.0, 2.0, 3.0]))  # one column, not two
+
+    cosmo = CosmoData.from_params(
+        H0=67.66,
+        OmegaM=0.3111,
+        OmegaBar=0.049,
+        As=2.1e-9,
+        ns=0.9665,
+        tau=0.056,
+        mode="user",
+        pk_file=str(pk_file),
+    )
+    with pytest.raises(ValueError, match="two-column"):
+        cosmo.get_power_spectrum()
+
+
+def test_user_mode_matches_camb_round_trip(tmp_path):
+    # Strongest check: build a *real* CAMB P(k), dump it to a table, reload
+    # it via mode="user", and confirm sigma(M) computed both ways agree --
+    # i.e. the log-log interpolation this mode relies on doesn't introduce
+    # meaningful error relative to a real (not synthetic power-law) P(k).
+    pytest.importorskip("camb")
+    from foraois.cosmo_utils import CosmoData
+
+    params = dict(H0=67.66, OmegaM=0.3111, OmegaBar=0.0490, As=2.105e-9, ns=0.9665, tau=0.0561)
+
+    cosmo_camb = CosmoData.from_params(mode="camb", pk_kmin=1e-4, pk_kmax=1e2, pk_npoints=2000, **params)
+    pk_camb = cosmo_camb.get_power_spectrum()
+
+    pk_file = _write_pk_table(tmp_path / "camb_pk.txt", pk_camb["k"], pk_camb["Pk"][0])
+    cosmo_user = CosmoData.from_params(
+        mode="user", pk_file=pk_file, pk_kmin=1e-4, pk_kmax=1e2, pk_npoints=2000, **params
+    )
+    pk_user = cosmo_user.get_power_spectrum()
+
+    # Not exact: log-log linear interpolation between grid points has some
+    # curvature error against CAMB's own smooth P(k), and np.savetxt's
+    # default text precision adds a little more -- still a tight bound.
+    assert np.allclose(pk_user["Pk"], pk_camb["Pk"], rtol=1e-4)
+
+    sigma8_camb = np.sqrt(cosmo_camb.get_mass_variance(pk_camb, radius=8.0))
+    sigma8_user = np.sqrt(cosmo_user.get_mass_variance(pk_user, radius=8.0))
+    assert sigma8_user == pytest.approx(sigma8_camb, rel=1e-4)

@@ -199,7 +199,7 @@ A run is configured by a YAML file with top-level `Run`, `Cosmology`, and a sect
 
 | Key | Default | Meaning |
 |---|---|---|
-| `mode` | -- (required) | `class` / `camb` / `user` (Boltzmann backend; `user` not yet implemented) |
+| `mode` | -- (required) | `class` / `camb` / `user` (Boltzmann backend; `user` supplies your own tabulated P(k), no extra dependency) |
 | `dm_model` | `cdm` | `cdm` / `wdm` / `fdm` |
 | `dm_model_mass` | `None` | Required for `wdm` (keV) / `fdm` (1e-22 eV units) |
 | `pk_kmin`, `pk_kmax` | 1e-4, 1e2 | Power spectrum k-range, h/Mpc |
@@ -210,9 +210,9 @@ A run is configured by a YAML file with top-level `Run`, `Cosmology`, and a sect
 | `window_function_type` | `top_hat` | See window functions above |
 | `sharp_k_alpha` | 2.5 | See window functions above |
 
-**`class`**: `output` (e.g. `mPk`), `P_k_max_1/Mpc` (max k for CLASS, physical 1/Mpc). **`camb`**: no extra keys needed -- CAMB cosmology params are derived from the shared `Cosmology` block.
+**`class`**: `output` (e.g. `mPk`), `P_k_max_1/Mpc` (max k for CLASS, physical 1/Mpc). **`camb`**: no extra keys needed -- CAMB cosmology params are derived from the shared `Cosmology` block. **`user`**: `pk_file` (required) -- path to a two-column, whitespace/comma-separated text table (`k` in h/Mpc, `P(k)` in `(Mpc/h)^3`, no header; `#`-prefixed comment lines are fine), log-log linearly interpolated onto the `pk_kmin`..`pk_kmax` grid (`CosmoData._load_user_power_spectrum`). Requesting k outside the table's own range raises rather than extrapolating -- widen the table or narrow `pk_kmin`/`pk_kmax`. `As`/`ns`/`tau_reio` are still required fields in `Cosmology` (the shared derivation logic reads them unconditionally) but are unused for this mode, since P(k) is supplied directly rather than generated from primordial parameters -- any placeholder value works. No CLASS/CAMB dependency needed at all, so this is the one path that uses only foraois's core (non-optional) dependencies end to end.
 
-**Example configs** in [`config/`](../config): `planck2018.yml` (CDM, CLASS backend), `planck2018_camb.yml` (CDM, CAMB backend), `planck2018_wdm.yml` (3 keV thermal-relic WDM, CAMB), `planck2018_fdm.yml` (1e-22 eV FDM, CAMB), `planck2018_fdm_sharpk.yml` (same FDM mass with the sharp-k window, `sharp_k_alpha: 2.5`).
+**Example configs** in [`config/`](../config): `planck2018.yml` (CDM, CLASS backend), `planck2018_camb.yml` (CDM, CAMB backend), `planck2018_user.yml` (same CDM cosmology, `mode: user`, reading `example_user_pk.txt` -- itself generated via CAMB, illustrative rather than a substitute for running your own Boltzmann code), `planck2018_wdm.yml` (3 keV thermal-relic WDM, CAMB), `planck2018_fdm.yml` (1e-22 eV FDM, CAMB), `planck2018_fdm_sharpk.yml` (same FDM mass with the sharp-k window, `sharp_k_alpha: 2.5`).
 
 ## CLI ([`main.py`](../src/foraois/main.py))
 

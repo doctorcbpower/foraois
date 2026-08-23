@@ -89,8 +89,22 @@ def params_from_dict(params, source="parameters dict"):
         run_params["Code"]["CLASS"]["P_k_max_1/Mpc"] = params["class"]["P_k_max_1/Mpc"]
     elif run_params["Code"]["mode"] == "camb":
         run_params["Code"]["CAMB"]["output"] = None
+    elif run_params["Code"]["mode"] == "user":
+        # mode="user": supply your own tabulated linear P(k), no CLASS/CAMB
+        # needed. `pk_file` -- a plain text file, two whitespace/comma-
+        # separated columns (k in h/Mpc, P(k) in (Mpc/h)^3, no header) --
+        # is loaded and log-log interpolated onto the same pk_kmin..pk_kmax
+        # grid the class/camb branches use, in CosmoData.get_power_spectrum().
+        # As/ns/tau_reio in the Cosmology block are still required by the
+        # derivation above but are unused for this mode (P(k) is supplied
+        # directly, not generated from primordial parameters) -- any
+        # placeholder value works.
+        user_params = params.get("user") or {}
+        if "pk_file" not in user_params:
+            raise KeyError(f"{source}: mode='user' requires a 'pk_file' key under 'user:' (path to a k, P(k) table).")
+        run_params["Code"]["USER"]["pk_file"] = user_params["pk_file"]
     else:
-        run_params["Code"]["USER"]["output"] = None
+        raise ValueError(f"{source}: unknown Run.mode {run_params['Code']['mode']!r} (expected 'class'/'camb'/'user').")
 
     # Non-standard dark matter: 'cdm' (default) leaves P(k) untouched;
     # 'wdm'/'fdm' multiply it by transfer_functions.T_WDM/T_FDM(k, dm_model_mass, ...)^2

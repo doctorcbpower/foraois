@@ -76,6 +76,29 @@ def test_params_from_dict_rejects_missing_backend_block():
         io.params_from_dict(bad)
 
 
+def test_params_from_dict_user_mode_requires_pk_file():
+    bad = {"Run": {"mode": "user"}, "Cosmology": RAW_PARAMS["Cosmology"], "user": {}}
+    with pytest.raises(KeyError, match="pk_file"):
+        io.params_from_dict(bad)
+
+
+def test_params_from_dict_user_mode_carries_pk_file_through():
+    good = {
+        "Run": {"mode": "user"},
+        "Cosmology": RAW_PARAMS["Cosmology"],
+        "user": {"pk_file": "some/table.txt"},
+    }
+    params = io.params_from_dict(good)
+    assert params["Code"]["mode"] == "user"
+    assert params["Code"]["USER"]["pk_file"] == "some/table.txt"
+
+
+def test_params_from_dict_rejects_unknown_mode():
+    bad = {"Run": {"mode": "not_a_real_mode"}, "Cosmology": RAW_PARAMS["Cosmology"], "not_a_real_mode": {}}
+    with pytest.raises(ValueError, match="unknown Run.mode"):
+        io.params_from_dict(bad)
+
+
 def test_get_params_missing_file_raises_actionable_error(tmp_path):
     missing = tmp_path / "does_not_exist.yml"
     with pytest.raises(FileNotFoundError, match="not found"):

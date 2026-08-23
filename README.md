@@ -39,15 +39,13 @@ cd foraois
 pip install -e .
 ```
 
-Core dependencies (`numpy`, `scipy`, `pyyaml`, `matplotlib`) install automatically. A linear power spectrum is computed via CLASS or CAMB, and `PCHMergerTree`'s JIT-parallel backend needs `numba` -- all optional extras, install whichever you need:
+Core dependencies (`numpy`, `scipy`, `pyyaml`, `matplotlib`) install automatically. A linear power spectrum is computed via CLASS, CAMB, or your own tabulated table (`mode: user`, no extra dependency at all -- see `config/planck2018_user.yml`); `PCHMergerTree`'s JIT-parallel backend needs `numba` -- CLASS/CAMB/`numba` are all optional extras, install whichever you need:
 
 ```
 pip install -e .[class]   # requires classy (compiled from source)
 pip install -e .[camb]    # pip-installable
 pip install -e .[numba]   # PCHMergerTree.build_forest_numba; not needed for build_tree/build_forest_numpy
 ```
-
-(A `user` mode for supplying your own tabulated `P(k)` without either dependency is planned but not yet implemented -- see `CosmoData.get_power_spectrum()`.)
 
 The example configs under `config/` (used throughout this README and the demo notebook) are part of the git checkout, not shipped with the package itself -- the commands below assume you're running from the repository root. Not yet published to PyPI.
 
