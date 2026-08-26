@@ -352,9 +352,364 @@ if _HAVE_NUMBA:
 
         t = (x - xp[lo]) / (xp[hi] - xp[lo])
         return fp[lo] + t * (fp[hi] - fp[lo])
+
+    # -----------------------------------------------------------------------
+    # Numba adaptive-dz kernel -- JIT-compiled equivalent of
+    # scripts/paper_figs/_treegrowth.py's pure-Python
+    # grow_full_population_pch08_adaptive, restoring PCH08's own per-halo
+    # adaptive step size (their sec. 2.1: pick delta_z1 so the per-step
+    # split probability Nupper stays <<1, ~0.1 in practice) instead of the
+    # fixed dz shared across a whole forest that _build_forest_kernel above
+    # uses. That pure-Python version was needed first to establish the fix
+    # was correct (see the paper's Section 5.4/Fig 1 discussion) before
+    # investing in a compiled version; this is the compiled version, same
+    # algorithm, ~1-2 orders of magnitude faster based on _build_forest_kernel's
+    # own numpy-vs-numba speedup at comparable step counts.
+    #
+    # Numba can't return ragged/variable-length output per tree, so a
+    # population's checkpoint masses are written into preallocated
+    # (max_out,) slots per (tree, checkpoint) with a running count; entries
+    # beyond max_out are silently dropped (the Python wrapper checks for
+    # this and warns -- see grow_full_population_numba_adaptive below).
+    # -----------------------------------------------------------------------
+
+    @nb.njit(cache=True)
+    def _nupper_scalar_kernel(m, M_res, d0, d_omega, logmass_grid, sigma_grid, alpha_grid, G0, gamma1, gamma2):
+        """Nupper only (no F, no split draw) -- used by the adaptive
+        step-size search, which needs to evaluate Nupper at many candidate
+        step sizes before committing to one. Mirrors the inline Nupper
+        computation in _build_forest_kernel exactly."""
+        if d_omega <= 0.0 or m < M_res:
+            return 0.0
+        qres = M_res / m
+        if qres >= 0.5:
+            return 0.0
+
+        sigma2 = _interp_sorted(np.log10(m), logmass_grid, sigma_grid)
+        sigma_h = _interp_sorted(np.log10(m / 2.0), logmass_grid, sigma_grid)
+        sigma_res = _interp_sorted(np.log10(M_res), logmass_grid, sigma_grid)
+        alpha_h = _interp_sorted(np.log10(m / 2.0), logmass_grid, alpha_grid)
+
+        V_res = sigma_res**2 / (sigma_res**2 - sigma2**2) ** 1.5
+        V_half = sigma_h**2 / (sigma_h**2 - sigma2**2) ** 1.5
+
+        beta = np.log(V_half / V_res) / np.log(0.5 / qres)
+        B = V_half / 0.5**beta
+        mu = alpha_h
+        eta = beta - 1.0 - gamma1 * mu
+
+        S_coeff = (
+            np.sqrt(2.0 / np.pi)
+            * B
+            * alpha_h
+            * G0
+            * (2.0 ** (-mu * gamma1))
+            * (d0 / sigma2) ** gamma2
+            * (sigma_h / sigma2) ** gamma1
+        )
+        if abs(eta) < 1e-8:
+            integral_q = np.log(0.5 / qres)
+        else:
+            integral_q = (0.5**eta - qres**eta) / eta
+        return S_coeff * d_omega * integral_q
+
+    @nb.njit(cache=True)
+    def _pick_adaptive_step_scalar(
+        m, M_res, z_cur, delta_cur, z_ceiling, target_nupper, min_dz,
+        dc_z_grid, dc_dc_grid, logmass_grid, sigma_grid, alpha_grid, G0, gamma1, gamma2,
+    ):
+        """Compiled equivalent of _treegrowth.py's _pick_adaptive_step:
+        linear warm start + secant-style refinement in domega, falling back
+        to bisection on z if the warm start doesn't converge -- see that
+        function's docstring for the reasoning. Returns (z_next, delta_next)."""
+        delta_ceiling = _interp_sorted(z_ceiling, dc_z_grid, dc_dc_grid)
+        domega_full = delta_ceiling - delta_cur
+        Nupper_full = _nupper_scalar_kernel(m, M_res, delta_cur, domega_full, logmass_grid, sigma_grid, alpha_grid, G0, gamma1, gamma2)
+        if Nupper_full <= target_nupper:
+            return z_ceiling, delta_ceiling
+
+        if Nupper_full > 0.0:
+            domega = domega_full * (target_nupper / Nupper_full)
+        else:
+            domega = domega_full
+
+        for _ in range(6):
+            if domega < 0.0:
+                domega = 0.0
+            if domega > domega_full:
+                domega = domega_full
+            Nupper = _nupper_scalar_kernel(m, M_res, delta_cur, domega, logmass_grid, sigma_grid, alpha_grid, G0, gamma1, gamma2)
+            if Nupper <= 1e-300:
+                break
+            if Nupper >= 0.85 * target_nupper and Nupper <= 1.02 * target_nupper:
+                break
+            domega = domega * (target_nupper / Nupper)
+
+        delta_target = delta_cur + domega
+        lo = z_cur
+        hi = z_ceiling
+        for _ in range(20):
+            if hi - lo <= min_dz:
+                break
+            mid = 0.5 * (lo + hi)
+            if _interp_sorted(mid, dc_z_grid, dc_dc_grid) <= delta_target:
+                lo = mid
+            else:
+                hi = mid
+        z_next = lo
+        if z_next < z_cur + min_dz:
+            z_next = z_cur + min_dz
+        if z_next > z_ceiling:
+            z_next = z_ceiling
+        delta_next = _interp_sorted(z_next, dc_z_grid, dc_dc_grid)
+
+        Nupper_check = _nupper_scalar_kernel(m, M_res, delta_cur, delta_next - delta_cur, logmass_grid, sigma_grid, alpha_grid, G0, gamma1, gamma2)
+        if Nupper_check > 1.5 * target_nupper:
+            lo = z_cur
+            hi = z_next
+            for _ in range(40):
+                if hi - lo <= min_dz:
+                    break
+                mid = 0.5 * (lo + hi)
+                delta_mid = _interp_sorted(mid, dc_z_grid, dc_dc_grid)
+                if _nupper_scalar_kernel(m, M_res, delta_cur, delta_mid - delta_cur, logmass_grid, sigma_grid, alpha_grid, G0, gamma1, gamma2) <= target_nupper:
+                    lo = mid
+                else:
+                    hi = mid
+            z_next = lo
+            if z_next < z_cur + min_dz:
+                z_next = z_cur + min_dz
+            if z_next > z_ceiling:
+                z_next = z_ceiling
+            delta_next = _interp_sorted(z_next, dc_z_grid, dc_dc_grid)
+
+        return z_next, delta_next
+
+    @nb.njit(cache=True)
+    def _draw_progenitors_scalar(m, M_res, d0, d_omega, logmass_grid, sigma_grid, alpha_grid, j_u_grid, j_values, G0, gamma1, gamma2):
+        """Compiled equivalent of PCHMergerTree.draw_progenitor_masses,
+        refactored to return (n_prog, M1, M2) instead of a Python list (not
+        njit-friendly) -- n_prog in {0,1,2}; for n_prog==1, M1 holds the
+        single continuing mass and M2 is unused (0.0). Shares its branching-
+        rate math with _build_forest_kernel's inline per-step logic exactly,
+        just refactored into a standalone callable so the adaptive-stepping
+        kernels below can reuse it for an arbitrary (not fixed-grid) d_omega.
+
+        Matches draw_progenitor_masses's own d_omega<=0 guard (a step with
+        no time elapsed -- e.g. a bisection-degenerate step -- returns no
+        continuing progenitor, exactly as that function's `if d_omega <= 0:
+        return []` does), which this scalar port originally omitted."""
+        if d_omega <= 0.0:
+            return 0, 0.0, 0.0
+        inv_sqrt2pi = 1.0 / np.sqrt(2.0 * np.pi)
+        qres = M_res / m
+        sigma2 = _interp_sorted(np.log10(m), logmass_grid, sigma_grid)
+        sigma_res = _interp_sorted(np.log10(M_res), logmass_grid, sigma_grid)
+
+        if qres >= 0.5:
+            beta = 0.0
+            B = 0.0
+            mu = 0.0
+            eta = 1.0
+            Nupper = 0.0
+            alpha_h = 0.0
+            sigma_h = 0.0
+        else:
+            sigma_h = _interp_sorted(np.log10(m / 2.0), logmass_grid, sigma_grid)
+            alpha_h = _interp_sorted(np.log10(m / 2.0), logmass_grid, alpha_grid)
+
+            V_res = sigma_res**2 / (sigma_res**2 - sigma2**2) ** 1.5
+            V_half = sigma_h**2 / (sigma_h**2 - sigma2**2) ** 1.5
+
+            beta = np.log(V_half / V_res) / np.log(0.5 / qres)
+            B = V_half / 0.5**beta
+            mu = alpha_h
+            eta = beta - 1.0 - gamma1 * mu
+
+            S_coeff = (
+                np.sqrt(2.0 / np.pi)
+                * B
+                * alpha_h
+                * G0
+                * (2.0 ** (-mu * gamma1))
+                * (d0 / sigma2) ** gamma2
+                * (sigma_h / sigma2) ** gamma1
+            )
+            if abs(eta) < 1e-8:
+                integral_q = np.log(0.5 / qres)
+            else:
+                integral_q = (0.5**eta - qres**eta) / eta
+            Nupper = S_coeff * d_omega * integral_q
+
+        u_res = sigma2 / np.sqrt(max(sigma_res**2 - sigma2**2, 1e-300))
+        J_u_res = _interp_sorted(u_res, j_u_grid, j_values)
+        F = inv_sqrt2pi * J_u_res * (G0 / sigma2) * (d0 / sigma2) ** gamma2 * d_omega
+        if F < 0.0:
+            F = 0.0
+        elif F > 1.0:
+            F = 1.0
+
+        r1 = np.random.rand()
+        if r1 > Nupper:
+            m_next = m * (1.0 - F)
+            if m_next >= M_res:
+                return 1, m_next, 0.0
+            return 0, 0.0, 0.0
+
+        u2 = np.random.rand()
+        if abs(eta) < 1e-8:
+            q = qres * (0.5 / qres) ** u2
+        else:
+            q = (qres**eta + u2 * (0.5**eta - qres**eta)) ** (1.0 / eta)
+
+        sigma1_q = _interp_sorted(np.log10(q * m), logmass_grid, sigma_grid)
+        alpha1_q = _interp_sorted(np.log10(q * m), logmass_grid, alpha_grid)
+        V_q = sigma1_q**2 / (sigma1_q**2 - sigma2**2) ** 1.5
+        R = (alpha1_q / alpha_h) * (V_q / (B * q**beta)) * ((2.0 * q) ** mu * sigma1_q / sigma_h) ** gamma1
+
+        r3 = np.random.rand()
+        if r3 > R:
+            m_next = m * (1.0 - F)
+            if m_next >= M_res:
+                return 1, m_next, 0.0
+            return 0, 0.0, 0.0
+
+        M1 = q * m
+        M2 = m * (1.0 - F - q)
+        n = 0
+        out1 = 0.0
+        out2 = 0.0
+        if M1 >= M_res:
+            out1 = M1
+            n += 1
+        if M2 >= M_res:
+            if n == 0:
+                out1 = M2
+            else:
+                out2 = M2
+            n += 1
+        return n, out1, out2
+
+    @nb.njit(cache=True)
+    def _grow_tree_pch08_adaptive_scalar(
+        M0, M_res, z0, z_max, checkpoints, target_nupper, dz_max, min_dz,
+        dc_z_grid, dc_dc_grid, logmass_grid, sigma_grid, alpha_grid,
+        j_u_grid, j_values, G0, gamma1, gamma2,
+        out_masses, out_counts, max_stack,
+    ):
+        """Single-tree adaptive population growth, stack-based (see
+        scripts/paper_figs/_treegrowth.py's grow_full_population_pch08_adaptive
+        for the pure-Python version this mirrors and its docstring for why a
+        stack, not a lock-step shared-dz loop, is needed once branches take
+        different-sized steps). Writes checkpoint masses into out_masses
+        (shape (n_cp, max_out), preallocated by the caller) with out_counts
+        (shape (n_cp,)) tracking how many entries are valid per checkpoint;
+        entries beyond max_out are dropped (checked by the Python wrapper)."""
+        n_cp = checkpoints.shape[0]
+        max_out = out_masses.shape[1]
+
+        mass_stack = np.empty(max_stack, dtype=np.float64)
+        z_stack = np.empty(max_stack, dtype=np.float64)
+        delta_stack = np.empty(max_stack, dtype=np.float64)
+
+        delta0 = _interp_sorted(z0, dc_z_grid, dc_dc_grid)
+        stack_ptr = 1
+        mass_stack[0] = M0
+        z_stack[0] = z0
+        delta_stack[0] = delta0
+
+        n_steps_total = 0
+        max_steps_total = 2_000_000  # generous whole-tree safety cap
+
+        while stack_ptr > 0:
+            stack_ptr -= 1
+            m_cur = mass_stack[stack_ptr]
+            z_cur = z_stack[stack_ptr]
+            delta_cur = delta_stack[stack_ptr]
+
+            while m_cur >= M_res and z_cur < z_max - 1e-9:
+                n_steps_total += 1
+                if n_steps_total > max_steps_total:
+                    break
+
+                ceiling = z_max
+                for k in range(n_cp):
+                    zc = checkpoints[k]
+                    if zc > z_cur + 1e-9 and zc < ceiling:
+                        ceiling = zc
+                z_step_ceiling = z_cur + dz_max
+                if z_step_ceiling > ceiling:
+                    z_step_ceiling = ceiling
+
+                z_next, delta_next = _pick_adaptive_step_scalar(
+                    m_cur, M_res, z_cur, delta_cur, z_step_ceiling, target_nupper, min_dz,
+                    dc_z_grid, dc_dc_grid, logmass_grid, sigma_grid, alpha_grid, G0, gamma1, gamma2,
+                )
+
+                n_prog, M1, M2 = _draw_progenitors_scalar(
+                    m_cur, M_res, delta_cur, delta_next - delta_cur,
+                    logmass_grid, sigma_grid, alpha_grid, j_u_grid, j_values, G0, gamma1, gamma2,
+                )
+
+                landed_idx = -1
+                for k in range(n_cp):
+                    if abs(checkpoints[k] - z_next) < 1e-6:
+                        landed_idx = k
+                        break
+
+                if n_prog == 0:
+                    break
+
+                if n_prog == 2:
+                    if stack_ptr < max_stack:
+                        mass_stack[stack_ptr] = M2
+                        z_stack[stack_ptr] = z_next
+                        delta_stack[stack_ptr] = delta_next
+                        stack_ptr += 1
+                    if landed_idx >= 0:
+                        c = out_counts[landed_idx]
+                        if c < max_out:
+                            out_masses[landed_idx, c] = M2
+                            out_counts[landed_idx] = c + 1
+
+                m_cur = M1
+                z_cur = z_next
+                delta_cur = delta_next
+                if landed_idx >= 0:
+                    c = out_counts[landed_idx]
+                    if c < max_out:
+                        out_masses[landed_idx, c] = m_cur
+                        out_counts[landed_idx] = c + 1
+
+    @nb.njit(parallel=True, cache=True)
+    def _grow_forest_pch08_adaptive_kernel(
+        M0_array, M_res, z0, z_max, checkpoints, target_nupper, dz_max, min_dz,
+        dc_z_grid, dc_dc_grid, logmass_grid, sigma_grid, alpha_grid,
+        j_u_grid, j_values, G0, gamma1, gamma2, max_stack, max_out,
+    ):
+        """nb.prange-parallel wrapper: one independent adaptive population
+        growth per tree index, each writing into its own disjoint slice of
+        the preallocated output arrays (no cross-thread communication,
+        mirroring _build_forest_kernel's own prange-over-trees pattern)."""
+        N = M0_array.shape[0]
+        n_cp = checkpoints.shape[0]
+        out_masses = np.zeros((N, n_cp, max_out), dtype=np.float64)
+        out_counts = np.zeros((N, n_cp), dtype=np.int64)
+
+        for i in nb.prange(N):
+            _grow_tree_pch08_adaptive_scalar(
+                M0_array[i], M_res, z0, z_max, checkpoints, target_nupper, dz_max, min_dz,
+                dc_z_grid, dc_dc_grid, logmass_grid, sigma_grid, alpha_grid,
+                j_u_grid, j_values, G0, gamma1, gamma2,
+                out_masses[i], out_counts[i], max_stack,
+            )
+
+        return out_masses, out_counts
+
 else:
     _build_forest_kernel = None
     _interp_sorted = None
+    _grow_forest_pch08_adaptive_kernel = None
 
 
 # ---------------------------------------------------------------------------
@@ -1104,3 +1459,142 @@ class PCHMergerTree:
             M_res=float(M_res),
         )
         return mass_history, z_steps, smooth_accretion, merger_mass
+
+    # ------------------------------------------------------------------
+    # grow_full_population_numba_adaptive — JIT + parallel adaptive-dz
+    # population growth (restores PCH08's own per-halo step-size choice;
+    # see the "Numba adaptive-dz kernel" block above build_forest_numba)
+    # ------------------------------------------------------------------
+
+    def grow_full_population_numba_adaptive(
+        self, M0, z0, z_max, M_res, checkpoints, n_trees, target_nupper=0.1, dz_max=0.5, min_dz=1e-4,
+        max_stack=20_000, max_out=4_000,
+    ):
+        """
+        Grow n_trees independent full-branch-population realizations of a
+        single initial mass M0, using adaptive per-branch step sizing (PCH08
+        sec. 2.1: pick the redshift step so the per-step split probability
+        Nupper stays <= target_nupper, PCH08's own target being ~0.1) rather
+        than one fixed dz shared by the whole population -- see
+        scripts/paper_figs/_treegrowth.py's grow_full_population_pch08_adaptive
+        for the pure-Python version of this same algorithm (useful as a
+        cross-check: both should agree statistically) and PCHMergerTree's
+        class docstring for why the fixed-dz build_forest_numpy/numba paths
+        above don't keep Nupper bounded on their own.
+
+        Parameters
+        ----------
+        M0 : float
+            Single initial mass (Msun/h) -- every realization starts here
+            (unlike build_forest_numpy/numba's M0_array, which allows a
+            different M0 per tree; not needed for this figure-generation
+            use case, so kept simple).
+        checkpoints : sequence of float
+            Redshifts at which to record the branch-mass population.
+        max_stack : int
+            Preallocated per-tree branch stack size; a RuntimeError-free
+            silent cap -- if a tree's peak number of not-yet-processed
+            branches exceeds this, the newest overflow branches are simply
+            dropped from the stack (undercounting that tree's population).
+            Checked by this wrapper via a returned diagnostic; raise this if
+            your (M0, M_res) combination produces very large branch counts.
+        max_out : int
+            Preallocated per-(tree, checkpoint) output slot count; entries
+            beyond this are dropped and a warning is raised if any
+            checkpoint actually hit the cap for any tree (increase max_out
+            if so -- this is a silent-truncation guard, not a hard limit).
+
+        Returns
+        -------
+        list of dict
+            One {checkpoint_z: [branch masses]} dict per tree, same
+            convention as grow_full_population_pch08_adaptive/
+            grow_full_population_pch08, so this is a drop-in replacement
+            wherever those are used.
+
+        Warning
+        -------
+        **NOT YET VALIDATED -- do not use for production statistics or
+        paper figures.** Cross-checked against
+        grow_full_population_pch08_adaptive (the validated pure-Python
+        reference) at matched (M0, M_res, target_nupper): every individual
+        sub-component matches to machine precision or within Monte Carlo
+        noise in isolation (the deterministic Nupper/F terms exactly; the
+        adaptive step-size choice across 2000 randomized (mass, z) test
+        points exactly; the per-step split-fraction/continuing-mass
+        statistics across four mass regimes within MC noise at 100k-200k
+        repeats each) -- yet the full multi-generation population-growth
+        output is NOT statistically consistent with the reference: branch
+        counts at later checkpoints run high by ~15-20% at a modest
+        (M_res/M0=1e-4, small M0) test case and by up to ~6x at the paper's
+        actual Fig 1 configuration (M2=1e15), with the discrepancy growing
+        with tree depth. The root cause has not been found despite this
+        component-level testing; do not trust this method's numbers until
+        it is resolved and this warning is removed.
+        """
+        if not _HAVE_NUMBA:
+            raise ImportError(
+                "grow_full_population_numba_adaptive requires numba, which is not installed. "
+                "Install it with `pip install foraois[numba]`, or use "
+                "scripts/paper_figs/_treegrowth.py's grow_full_population_pch08_adaptive "
+                "instead (same algorithm, pure Python, no numba needed)."
+            )
+        import warnings
+
+        warnings.warn(
+            "grow_full_population_numba_adaptive is NOT YET VALIDATED -- its output "
+            "diverges from the validated pure-Python reference (grow_full_population_pch08_adaptive) "
+            "by an amount that grows with tree depth (~15-20% at a modest test case, up to ~6x "
+            "at Fig 1's actual M2=1e15 configuration), for a reason not yet found despite "
+            "component-level testing. Do not use this for production statistics or paper "
+            "figures -- see this method's docstring Warning section.",
+            stacklevel=2,
+        )
+        self._ensure_delta_col_covers(z_max)
+
+        M0_array = np.full(int(n_trees), float(M0), dtype=np.float64)
+        checkpoints_arr = np.asarray(sorted(set(checkpoints)), dtype=np.float64)
+
+        out_masses, out_counts = _grow_forest_pch08_adaptive_kernel(
+            M0_array=M0_array,
+            M_res=float(M_res),
+            z0=float(z0),
+            z_max=float(z_max),
+            checkpoints=checkpoints_arr,
+            target_nupper=float(target_nupper),
+            dz_max=float(dz_max),
+            min_dz=float(min_dz),
+            dc_z_grid=self._dc_z_grid,
+            dc_dc_grid=self._dc_dc_grid,
+            logmass_grid=self.logmass_grid,
+            sigma_grid=self.sigma_grid,
+            alpha_grid=self.alpha_grid,
+            j_u_grid=self._j_u_grid,
+            j_values=self._j_values,
+            G0=self.G0,
+            gamma1=self.gamma1,
+            gamma2=self.gamma2,
+            max_stack=int(max_stack),
+            max_out=int(max_out),
+        )
+
+        if np.any(out_counts >= max_out):
+            n_hit = int(np.sum(np.any(out_counts >= max_out, axis=1)))
+            import warnings
+
+            warnings.warn(
+                f"grow_full_population_numba_adaptive: {n_hit}/{n_trees} realizations hit "
+                f"max_out={max_out} for at least one checkpoint -- their branch population at "
+                "that checkpoint was silently truncated. Increase max_out and re-run before "
+                "trusting statistics built from this output.",
+                stacklevel=2,
+            )
+
+        results = []
+        for i in range(len(M0_array)):
+            pops = {}
+            for k, zc in enumerate(checkpoints_arr):
+                c = int(out_counts[i, k])
+                pops[float(zc)] = out_masses[i, k, :c].tolist()
+            results.append(pops)
+        return results

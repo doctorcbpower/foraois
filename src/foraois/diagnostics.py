@@ -83,6 +83,70 @@ def expected_splits_per_step(tree_generator, M0, z0, z_max, M_res, dz=0.1):
     return z_steps, Nupper, M_trajectory
 
 
+def expected_splits_per_step_zh(cosmo_data, M0, z0, z_max, M_res, dz=0.1, model="cdm", N_grid=40, S_max_factor=8.0):
+    """
+    Zhang-Hui analogue of expected_splits_per_step: a deterministic
+    (mean-field, no randomness) trajectory of `p_split` -- the per-step
+    resolved-split probability `first_crossing_step` computes exactly via
+    quadrature (see its own docstring) -- for a single halo mass M0
+    evolving from z0 to z_max on a fixed dz grid.
+
+    Why this is needed: PCHMergerTree's Nupper is an *approximate upper
+    bound* that is not bounded to [0,1] by construction, and can reach
+    into the hundreds at a coarse dz (see PCHMergerTree's own class
+    docstring and this module's Nupper checks) -- a clear, unambiguous
+    failure mode. Zhang-Hui's p_split, by contrast, is an exact CDF-derived
+    probability and is always in [0,1]; it can never "blow up" the way
+    Nupper does. But the underlying concern PCH08's Nupper<<1 design target
+    guards against is not "does the upper-bound estimator exceed 1" per se
+    -- it is that a single step can register at most ONE resolved split,
+    so if the *true* expected number of resolved splits across the step is
+    not small, the single-split-per-step construction under-counts real
+    multi-merger structure within that step, for *either* backend's
+    branching kernel. p_split close to 1 is exactly the regime where that
+    under-counting risk is largest for Zhang-Hui (a near-certain split
+    every step leaves no room to distinguish "one split" from "several
+    splits compressed into one draw"), so we treat p_split itself as the
+    Zhang-Hui-side quantity to hold small, by direct analogy with Nupper,
+    and adopt the same qualitative target (<<1, ~0.1 in practice) pending
+    a more rigorous derivation. This has NOT been derived from first
+    principles the way PCH08's eq. A5 Nupper was -- treat it as a
+    reasonable, symmetric, empirically-motivated proxy (see this module's
+    tests / the paper's Section 5.4 discussion for a convergence check
+    confirming p_split<=0.1 tracks where Zhang-Hui's own results stop
+    changing with dz), not an authoritative bound.
+
+    Returns
+    -------
+    z_steps : np.ndarray, shape (n_steps+1,)
+    p_split : np.ndarray, shape (n_steps,)
+    M_trajectory : np.ndarray, shape (n_steps,)
+    """
+    from .zhang_hui_trees import first_crossing_step
+
+    z_steps = np.arange(z0, z_max + dz * 0.5, dz)
+    n_steps = len(z_steps) - 1
+
+    p_split = np.zeros(n_steps)
+    M_trajectory = np.zeros(n_steps)
+    M = float(M0)
+
+    for j in range(n_steps):
+        z0_j, z1_j = z_steps[j], z_steps[j + 1]
+        step = first_crossing_step(M, z0_j, z1_j, M_res, cosmo_data, model=model, N_grid=N_grid, S_max_factor=S_max_factor)
+        p_split[j] = step["p_split"]
+        M_trajectory[j] = M
+        # mean-field decay estimate for the next step's reference mass,
+        # matching expected_splits_per_step's own convention exactly
+        M = M * (1.0 - min(max(step["p_split"], 0.0), 1.0) * 0.25)
+        if M < M_res:
+            p_split[j + 1 :] = np.nan
+            M_trajectory[j + 1 :] = np.nan
+            break
+
+    return z_steps, p_split, M_trajectory
+
+
 def true_split_probability(tree_generator, M2, M_res, delta0, d_omega, n_points=400):
     """
     Exact (quadrature, not Monte Carlo) total split probability
