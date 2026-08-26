@@ -125,6 +125,58 @@ def test_numba_and_numpy_backends_statistically_consistent(tree_generator):
     assert mean_mass_np == pytest.approx(mean_mass_nb, rel=0.1)
 
 
+def test_build_forest_numba_unresolved_accretion_matches_reference_constant(tree_generator):
+    # Regression test for a real bug: _build_forest_kernel and
+    # _draw_progenitors_scalar both used `1.0 / np.sqrt(2.0 * np.pi)`
+    # (~0.3989) as F's (the unresolved-accretion mass-loss fraction)
+    # prefactor instead of the correct `np.sqrt(2.0 / np.pi)` (~0.7979) that
+    # _unresolved_accretion_fraction (the shared numpy/scalar machinery)
+    # uses -- exactly half the correct value. This silently halved every
+    # step's mass loss in BOTH numba kernels, compounding into up to a ~6x
+    # branch-count excess with tree depth in the adaptive-stepping kernel
+    # (see grow_full_population_numba_adaptive's docstring) -- yet
+    # test_numba_and_numpy_backends_statistically_consistent above, with its
+    # rel=0.1 tolerance (sized for RNG-order differences, not a tight
+    # physics check), did not catch it in _build_forest_kernel.
+    #
+    # Isolate F from splitting entirely by using M_res just above M0/2, so
+    # qres = M_res/M0 >= 0.5 for every halo at every step (no split can ever
+    # produce two resolved fragments -- Nupper is exactly 0 by construction,
+    # see _branching_rate_terms's own no_split_possible branch). Every
+    # step's mass change is then pure, fully deterministic unresolved
+    # accretion (no randomness involved at all), so build_forest_numba's
+    # output can be checked directly against an analytically-compounded
+    # reference F -- a machine-precision check, not a statistical one, that
+    # this specific wrong-constant bug class cannot silently reappear in.
+    from foraois.pch_trees import _branching_rate_terms, _unresolved_accretion_fraction
+
+    pch = tree_generator
+    M0_np = 1.0e12
+    M_res_np = 0.6 * M0_np  # qres = 0.6 >= 0.5 for the whole run (mass only decreases)
+    dz = 0.2
+    z0, z_max = 0.0, 1.0
+
+    mh_nb, z_steps, _, _ = pch.build_forest_numba(M0_array=np.full(5, M0_np), z0=z0, z_max=z_max, M_res=M_res_np, dz=dz)
+
+    m = M0_np
+    delta_prev = pch._delta_col_at_z(z_steps[0])
+    for z_next in z_steps[1:]:
+        delta_next = pch._delta_col_at_z(z_next)
+        d_omega = delta_next - delta_prev
+        terms = _branching_rate_terms(
+            np.asarray(m), M_res_np, pch.cosmo_data.sigma_at_logmass, pch.cosmo_data.dlogsigma_at_logmass,
+            delta_prev, d_omega, pch.G0, pch.gamma1, pch.gamma2,
+        )
+        assert float(terms["Nupper"]) == 0.0  # confirms qres>=0.5 held throughout, as designed
+        F = float(
+            _unresolved_accretion_fraction(m, terms, delta_prev, d_omega, pch.G0, pch.gamma2, pch._j_u_grid, pch._j_values)
+        )
+        m = m * (1.0 - F) if m * (1.0 - F) >= M_res_np else 0.0
+        delta_prev = delta_next
+
+    assert mh_nb[:, -1] == pytest.approx(m, rel=1e-10)
+
+
 def test_build_tree_single_tree_structure(tree_generator):
     np.random.seed(5)
     tree = tree_generator.build_tree(M0=M0, z0=Z0, z_max=Z_MAX, M_res=M_RES, dz=DZ)
