@@ -32,7 +32,7 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _treegrowth import grow_full_population_pch08, grow_full_population_zh  # noqa: E402
+from _treegrowth import grow_full_population_pch08, grow_full_population_pch08_batch, grow_full_population_zh_batch  # noqa: E402
 
 from foraois.cosmo_utils import CosmoData  # noqa: E402
 from foraois.pch_trees import PCHMergerTree  # noqa: E402
@@ -81,14 +81,22 @@ def histogram_1st_2nd(top1_list, top2_list, M2, n_bins=20, log_range=(-4.5, 0.05
     return centers, log_f1, log_f2
 
 
-def run_column(pch, cosmo_data, M2, checkpoints, dz, n_trees, model, rng, n_grid, s_max_factor):
+def run_column(pch, cosmo_data, M2, checkpoints, dz, n_trees, model, rng, n_grid, s_max_factor, target_nupper=0.5):
+    """target_nupper (None falls back to the old fixed-dz behaviour) drives
+    PCH08's population growth through grow_full_population_pch08_batch
+    (adaptive per-branch stepping, dz as the step-size ceiling; uses the
+    ~400-600x faster numba kernel when available -- see that function's
+    docstring) instead of a fixed-dz per-tree Python loop."""
     M_res = m_res_for(M2)
     z_max = max(checkpoints)
 
     pch_top1 = {z1: [] for z1 in checkpoints}
     pch_top2 = {z1: [] for z1 in checkpoints}
-    for _ in range(n_trees):
-        pops = grow_full_population_pch08(pch, M2, Z0, z_max, M_res, dz, checkpoints)
+    if target_nupper is not None:
+        pch_pops = grow_full_population_pch08_batch(pch, M2, Z0, z_max, M_res, checkpoints, n_trees, target_nupper=target_nupper, dz_max=dz)
+    else:
+        pch_pops = [grow_full_population_pch08(pch, M2, Z0, z_max, M_res, dz, checkpoints) for _ in range(n_trees)]
+    for pops in pch_pops:
         for z1 in checkpoints:
             t1, t2 = top_two(pops[z1])
             pch_top1[z1].append(t1)
@@ -98,14 +106,14 @@ def run_column(pch, cosmo_data, M2, checkpoints, dz, n_trees, model, rng, n_grid
     zh_top2 = {z1: [] for z1 in checkpoints}
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", UserWarning)
-        for _ in range(n_trees):
-            pops = grow_full_population_zh(
-                cosmo_data, M2, Z0, z_max, M_res, dz, checkpoints, model=model, rng=rng, N_grid=n_grid, S_max_factor=s_max_factor
-            )
-            for z1 in checkpoints:
-                t1, t2 = top_two(pops[z1])
-                zh_top1[z1].append(t1)
-                zh_top2[z1].append(t2)
+        zh_pops = grow_full_population_zh_batch(
+            cosmo_data, M2, Z0, z_max, M_res, dz, checkpoints, n_trees, model=model, rng=rng, N_grid=n_grid, S_max_factor=s_max_factor
+        )
+    for pops in zh_pops:
+        for z1 in checkpoints:
+            t1, t2 = top_two(pops[z1])
+            zh_top1[z1].append(t1)
+            zh_top2[z1].append(t2)
 
     return (pch_top1, pch_top2), (zh_top1, zh_top2)
 
@@ -118,8 +126,18 @@ def main():
     parser.add_argument("--n-grid", type=int, default=40)
     parser.add_argument("--s-max-factor", type=float, default=8.0)
     parser.add_argument("--seed", type=int, default=1)
+    parser.add_argument(
+        "--target-nupper",
+        type=float,
+        default=0.5,
+        help="PCH08's adaptive-step target for Nupper (per-step split probability); --dz is used as the "
+        "per-branch maximum step size. See fig1_conditional_mass_function.py's --target-nupper help for "
+        "why fixed-dz stepping is not Nupper-compliant at this figure's M_res/M2 ratio. Pass a negative "
+        "value to fall back to the old fixed-dz grow_full_population_pch08 behaviour.",
+    )
     parser.add_argument("--output", default="fig2_progenitors.png")
     args = parser.parse_args()
+    target_nupper = None if args.target_nupper < 0 else args.target_nupper
 
     run_params = foraois_io.get_params(args.config)
     cosmo_data = CosmoData(run_params, redshift=[Z0])
@@ -134,7 +152,7 @@ def main():
     for col, M2 in enumerate(M2_VALUES):
         print(f"M2={M2:.2e} ...", flush=True)
         (pch1, pch2), (zh1, zh2) = run_column(
-            pch, cosmo_data, M2, Z1_VALUES, args.dz, args.n_trees, "cdm", rng, args.n_grid, args.s_max_factor
+            pch, cosmo_data, M2, Z1_VALUES, args.dz, args.n_trees, "cdm", rng, args.n_grid, args.s_max_factor, target_nupper=target_nupper
         )
         for row, z1 in enumerate(Z1_VALUES):
             ax = axes[row, col]

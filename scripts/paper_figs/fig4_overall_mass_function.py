@@ -69,7 +69,8 @@ from scipy.integrate import quad
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _treegrowth import (  # noqa: E402
     grow_full_population_pch08,
-    grow_full_population_zh,
+    grow_full_population_pch08_batch,
+    grow_full_population_zh_batch,
     sheth_tormen_dn_dlogm,
 )
 
@@ -112,6 +113,58 @@ def run_backend(grow_fn, reps, n_bin, checkpoints, dz, n_trees, m_res_frac, **gr
     return pooled
 
 
+def run_backend_pch08_batch(pch, reps, n_bin, checkpoints, dz, n_trees, m_res_frac, target_nupper=0.5):
+    """PCH08-specific equivalent of run_backend: grows all n_trees
+    realizations for a given root-mass bin in one batched call
+    (grow_full_population_pch08_batch, adaptive per-branch stepping with dz
+    as the step-size ceiling) instead of run_backend's generic per-tree
+    Python loop -- uses the ~400-600x faster numba kernel when available
+    (see grow_full_population_pch08_batch's own docstring). This is the
+    heaviest of the four fig1-4 scripts (a whole grid of root masses, not
+    just 3), so it benefits the most from batching. target_nupper=None
+    falls back to run_backend's old fixed-dz grow_full_population_pch08
+    loop."""
+    if target_nupper is None:
+        return run_backend(
+            lambda M0, z0, z_max, M_res, dz, checkpoints: grow_full_population_pch08(pch, M0, z0, z_max, M_res, dz, checkpoints),
+            reps, n_bin, checkpoints, dz, n_trees, m_res_frac,
+        )
+
+    pooled = {z1: {"masses": [], "weights": []} for z1 in checkpoints}
+    z_max = max(checkpoints)
+    for M2, Nb in zip(reps, n_bin):
+        M_res = M2 * m_res_frac
+        w = Nb / n_trees
+        pops_list = grow_full_population_pch08_batch(pch, M2, Z0, z_max, M_res, checkpoints, n_trees, target_nupper=target_nupper, dz_max=dz)
+        for pops in pops_list:
+            for z1 in checkpoints:
+                masses = pops[z1]
+                pooled[z1]["masses"].extend(masses)
+                pooled[z1]["weights"].extend([w] * len(masses))
+    return pooled
+
+
+def run_backend_zh_batch(cosmo_data, reps, n_bin, checkpoints, dz, n_trees, m_res_frac, model="cdm", rng=None, n_grid=40, s_max_factor=8.0):
+    """Zhang-Hui equivalent of run_backend_pch08_batch: grows all n_trees
+    realizations for a given root-mass bin in one batched call
+    (grow_full_population_zh_batch) instead of run_backend's generic
+    per-tree Python loop -- uses the numba closed-form kernel when
+    available (ZhangHuiMergerTree.grow_full_population_numba, no
+    solve_first_crossing at all -- see that method's own docstring)."""
+    pooled = {z1: {"masses": [], "weights": []} for z1 in checkpoints}
+    z_max = max(checkpoints)
+    for M2, Nb in zip(reps, n_bin):
+        M_res = M2 * m_res_frac
+        w = Nb / n_trees
+        pops_list = grow_full_population_zh_batch(cosmo_data, M2, Z0, z_max, M_res, dz, checkpoints, n_trees, model=model, rng=rng, N_grid=n_grid, S_max_factor=s_max_factor)
+        for pops in pops_list:
+            for z1 in checkpoints:
+                masses = pops[z1]
+                pooled[z1]["masses"].extend(masses)
+                pooled[z1]["weights"].extend([w] * len(masses))
+    return pooled
+
+
 def weighted_dndlogm(pooled_z1, log_edges):
     masses = np.asarray(pooled_z1["masses"])
     weights = np.asarray(pooled_z1["weights"])
@@ -141,9 +194,19 @@ def main():
     parser.add_argument("--z1-values", default="0.5,1,2,4")
     parser.add_argument("--n-mass-bins", type=int, default=24, help="log10(M1) histogram bins for the output curves")
     parser.add_argument("--seed", type=int, default=1)
+    parser.add_argument(
+        "--target-nupper",
+        type=float,
+        default=0.5,
+        help="PCH08's adaptive-step target for Nupper (per-step split probability); --dz is used as the "
+        "per-branch maximum step size. See fig1_conditional_mass_function.py's --target-nupper help for "
+        "why fixed-dz stepping is not Nupper-compliant at these M_res/M2 ratios. Pass a negative value to "
+        "fall back to the old fixed-dz grow_full_population_pch08 behaviour.",
+    )
     parser.add_argument("--output", default="fig4_mass_function.png")
     args = parser.parse_args()
     checkpoints = [float(z) for z in args.z1_values.split(",")]
+    target_nupper = None if args.target_nupper < 0 else args.target_nupper
 
     run_params = foraois_io.get_params(args.config)
     cosmo_data = CosmoData(run_params, redshift=[Z0])
@@ -156,29 +219,32 @@ def main():
     print(f"Number density per bin: {n_bin}")
 
     print("Growing PCH08 ensemble ...", flush=True)
-    pooled_pch = run_backend(
-        lambda M0, z0, z_max, M_res, dz, checkpoints: grow_full_population_pch08(pch, M0, z0, z_max, M_res, dz, checkpoints),
+    pooled_pch = run_backend_pch08_batch(
+        pch,
         reps,
         n_bin,
         checkpoints,
         args.dz,
         args.n_trees,
         M_RES_FRAC,
+        target_nupper=target_nupper,
     )
 
-    print("Growing Zhang-Hui ensemble (slow) ...", flush=True)
+    print("Growing Zhang-Hui ensemble ...", flush=True)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", UserWarning)
-        pooled_zh = run_backend(
-            lambda M0, z0, z_max, M_res, dz, checkpoints: grow_full_population_zh(
-                cosmo_data, M0, z0, z_max, M_res, dz, checkpoints, model="cdm", rng=rng, N_grid=args.n_grid, S_max_factor=args.s_max_factor
-            ),
+        pooled_zh = run_backend_zh_batch(
+            cosmo_data,
             reps,
             n_bin,
             checkpoints,
             args.dz,
             args.n_trees,
             M_RES_FRAC,
+            model="cdm",
+            rng=rng,
+            n_grid=args.n_grid,
+            s_max_factor=args.s_max_factor,
         )
 
     import matplotlib.pyplot as plt

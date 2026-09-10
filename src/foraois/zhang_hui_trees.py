@@ -378,6 +378,89 @@ def draw_progenitor_mass_zh(
     return progenitors
 
 
+def draw_progenitor_mass_zh_flat(M0, z0, z1, M_res, cosmo_data, model="cdm", rng=None):
+    """
+    Closed-form flat-barrier equivalent of `draw_progenitor_mass_zh`, for
+    the currently-flat-barrier models (cdm/wdm/fdm's placeholder -- see
+    `_assert_flat_barrier`). Same algorithm as
+    `_build_forest_flat_barrier_numpy`'s per-halo math (Levy-distribution
+    `_flat_barrier_cdf`/`_flat_barrier_sample`, and the same N23-footnote-3
+    `p_split`/`S_lower` resolved-split restriction as
+    `first_crossing_step`'s general path -- see that function's docstring
+    for the citation), just as a single-halo scalar call instead of the
+    vectorised forest builder.
+
+    This exists because `draw_progenitor_mass_zh` (via `first_crossing_step`
+    -> `solve_first_crossing`) solves the general Zhang & Hui Volterra
+    integral equation numerically -- an O(N_grid) loop of
+    `scipy.integrate.quad` calls (`_g2_near_diagonal`), each itself
+    adaptive -- even though the flat-barrier case has an exact closed form
+    requiring none of that. That numerical solve is what makes
+    `grow_full_population_zh` (`_treegrowth.py`) so much more expensive
+    than PCH08 per branch per step; this function lets a full-population
+    grower use the same closed-form shortcut `build_forest_numpy`/
+    `build_forest_numba` already use for main-progenitor-only trees,
+    without the caller having to duplicate that vectorised code's
+    per-halo math by hand. Does NOT check `_assert_flat_barrier` itself
+    (a per-call check would defeat the point of avoiding per-step
+    overhead) -- callers must check once up front, as
+    `grow_full_population_zh_flat` does.
+
+    Returns
+    -------
+    list of float
+        Same 0/1/2-progenitor convention as `draw_progenitor_mass_zh`.
+    """
+    rng = rng if rng is not None else np.random.default_rng()
+
+    if M_res >= M0:
+        return []
+
+    sigma0_sq = float(cosmo_data.sigma_at_logmass(np.log10(M0))) ** 2
+    sigma_res_sq = float(cosmo_data.sigma_at_logmass(np.log10(M_res))) ** 2
+    S_res = sigma_res_sq - sigma0_sq
+    if S_res <= 0:
+        raise ValueError(
+            f"M_res={M_res} does not give sigma(M_res) > sigma(M0={M0}) -- "
+            "M_res must be strictly below M0 on the sigma(M) relation."
+        )
+
+    # M_res is an arbitrary evaluation mass for a flat barrier -- delta_c
+    # doesn't depend on it (that's exactly what _assert_flat_barrier
+    # verifies, once, up front) -- same choice _build_forest_flat_barrier_numpy
+    # makes.
+    d0 = float(delta_c(M_res, z0, model, cosmo_data))
+    d1 = float(delta_c(M_res, z1, model, cosmo_data))
+    d_omega = d1 - d0
+
+    p_res = float(_flat_barrier_cdf(S_res, d_omega))
+    M_continuing = M0 * p_res
+
+    can_split = M_continuing > 2.0 * M_res
+    if can_split:
+        S_lower = float(np.clip(_S_at_mass(M_continuing - M_res, sigma0_sq, cosmo_data), 0.0, S_res))
+        p_lower = float(_flat_barrier_cdf(S_lower, d_omega)) if S_lower > 0.0 else 1.0
+        p_split = max(p_res - p_lower, 0.0)
+    else:
+        p_lower = p_res
+        p_split = 0.0
+
+    if rng.random() >= p_split:
+        return [M_continuing] if M_continuing >= M_res else []
+
+    v = rng.uniform(p_lower, p_res)
+    S_star = float(_flat_barrier_sample(v, d_omega))
+    M2 = float(_mass_at_S(np.array([S_star]), sigma0_sq, cosmo_data)[0])
+    M1 = M_continuing - M2
+
+    progenitors = []
+    if M1 >= M_res:
+        progenitors.append(M1)
+    if M2 >= M_res:
+        progenitors.append(M2)
+    return progenitors
+
+
 def _build_forest_flat_barrier_numpy(M0_array, z_steps, model, cosmo_data, M_res, rng):
     """
     Vectorised forest builder, exploiting that cdm/wdm/fdm's collapse
@@ -713,10 +796,183 @@ if _HAVE_NUMBA:
 
         return mass_history, smooth_accretion, merger_mass
 
+    # -----------------------------------------------------------------------
+    # Numba full-population kernel -- extends _build_forest_flat_barrier_
+    # kernel's per-halo/per-step closed-form Levy sampling (above) from
+    # "track only the main progenitor" to "track every branch", the same
+    # way pch_trees._grow_tree_pch08_adaptive_scalar/
+    # _grow_forest_pch08_adaptive_kernel extend PCH08's own build_forest_
+    # numba. Unlike PCH08, no adaptive step-size search is needed here:
+    # Zhang & Hui's rate is an exact, already-bounded probability
+    # (p_split <= 1 by construction, not PCH08's Nupper upper-bound
+    # approximation that needs to be kept small), so every branch simply
+    # walks the same shared, fixed-dz z_steps grid the caller already
+    # uses for _build_forest_flat_barrier_kernel -- no per-branch adaptive
+    # stepping, no _pick_adaptive_step-style search.
+    #
+    # This is the numba counterpart of scripts/paper_figs/_treegrowth.py's
+    # grow_full_population_zh_flat (itself the closed-form counterpart of
+    # grow_full_population_zh -- see draw_progenitor_mass_zh_flat's own
+    # docstring for why the closed form exists at all): same per-branch
+    # math, same {checkpoint: [masses]} output convention, just compiled
+    # and parallelized across trees instead of a serial Python loop.
+    # -----------------------------------------------------------------------
+
+    @nb.njit(cache=True)
+    def _grow_tree_zh_flat_scalar(
+        M0, M_res, z_steps, checkpoint_step_idx,
+        dc_z_grid, dc_dc_grid, logmass_grid, sigma_grid, sigma_grid_rev, logmass_grid_rev,
+        out_masses, out_counts, max_stack,
+    ):
+        """Single-tree full-population growth on the fixed z_steps grid,
+        using the same closed-form flat-barrier Levy sampling as
+        _build_forest_flat_barrier_kernel's per-halo body, extended to
+        every branch via an explicit stack (mirrors
+        pch_trees._grow_tree_pch08_adaptive_scalar's stack pattern).
+        checkpoint_step_idx holds each checkpoint's index into z_steps
+        (computed by the Python wrapper, mirroring _treegrowth.py's
+        _checkpoint_indices); out_masses/out_counts are this tree's
+        preallocated (n_cp, max_out) / (n_cp,) output slices."""
+        n_cp = checkpoint_step_idx.shape[0]
+        max_out = out_masses.shape[1]
+        n_steps = z_steps.shape[0] - 1
+
+        mass_stack = np.empty(max_stack, dtype=np.float64)
+        step_idx_stack = np.empty(max_stack, dtype=np.int64)
+
+        log10_M_res = np.log10(M_res)
+        sigma_res = _interp_sorted_zh(log10_M_res, logmass_grid, sigma_grid)
+        sigma_res_sq = sigma_res * sigma_res
+
+        stack_ptr = 1
+        mass_stack[0] = M0
+        step_idx_stack[0] = 0
+
+        while stack_ptr > 0:
+            stack_ptr -= 1
+            m = mass_stack[stack_ptr]
+            j = step_idx_stack[stack_ptr]
+
+            while j < n_steps and m >= M_res:
+                z0 = z_steps[j]
+                z1 = z_steps[j + 1]
+                d0 = _interp_sorted_zh(z0, dc_z_grid, dc_dc_grid)
+                d1 = _interp_sorted_zh(z1, dc_z_grid, dc_dc_grid)
+                d_omega = d1 - d0
+
+                sigma0 = _interp_sorted_zh(np.log10(m), logmass_grid, sigma_grid)
+                sigma0_sq = sigma0 * sigma0
+                S_res = sigma_res_sq - sigma0_sq
+
+                p_res = math.erfc(d_omega / np.sqrt(2.0 * S_res))
+                m_continuing = m * p_res
+
+                can_split = m_continuing > 2.0 * M_res
+                if can_split:
+                    sigma_avail = _interp_sorted_zh(np.log10(m_continuing - M_res), logmass_grid, sigma_grid)
+                    S_lower = sigma_avail * sigma_avail - sigma0_sq
+                    if S_lower < 0.0:
+                        S_lower = 0.0
+                    elif S_lower > S_res:
+                        S_lower = S_res
+                    p_lower = math.erfc(d_omega / np.sqrt(2.0 * S_lower)) if S_lower > 0.0 else 1.0
+                    p_split = p_res - p_lower
+                    if p_split < 0.0:
+                        p_split = 0.0
+                else:
+                    p_lower = p_res
+                    p_split = 0.0
+
+                u1 = np.random.random()
+                do_split = can_split and (u1 < p_split)
+
+                m1 = 0.0
+                m2 = 0.0
+                ok1 = False
+                ok2 = False
+                if do_split:
+                    v = p_lower + np.random.random() * (p_res - p_lower)
+                    S_star = (d_omega * d_omega) / (2.0 * _erfcinv_numba(v) ** 2)
+                    sigma_target = np.sqrt(max(S_star, 0.0) + sigma0_sq)
+                    logmass2 = _interp_sorted_zh(sigma_target, sigma_grid_rev, logmass_grid_rev)
+                    m2 = 10.0**logmass2
+                    m1 = m_continuing - m2
+                    ok1 = m1 >= M_res
+                    ok2 = m2 >= M_res
+
+                if not do_split:
+                    m_next = m_continuing
+                elif ok1 and ok2:
+                    m_next = m1
+                elif ok1:
+                    m_next = m1
+                elif ok2:
+                    m_next = m2
+                else:
+                    # Both fragments landed below M_res -- see
+                    # _build_forest_flat_barrier_kernel's own comment on
+                    # this same branch: the p_split/S_lower restriction is
+                    # designed to prevent this, so it's only a
+                    # floating-point-boundary case.
+                    m_next = 0.0
+
+                # The non-continuing fragment becomes a new branch,
+                # pushed to resume its own walk from step j+1.
+                if do_split and ok1 and ok2 and stack_ptr < max_stack:
+                    mass_stack[stack_ptr] = m2
+                    step_idx_stack[stack_ptr] = j + 1
+                    stack_ptr += 1
+                    for k in range(n_cp):
+                        if checkpoint_step_idx[k] == j + 1:
+                            c = out_counts[k]
+                            if c < max_out:
+                                out_masses[k, c] = m2
+                                out_counts[k] = c + 1
+                            break
+
+                m = m_next
+                j += 1
+
+                if m >= M_res:
+                    for k in range(n_cp):
+                        if checkpoint_step_idx[k] == j:
+                            c = out_counts[k]
+                            if c < max_out:
+                                out_masses[k, c] = m
+                                out_counts[k] = c + 1
+                            break
+
+    @nb.njit(parallel=True, cache=True)
+    def _grow_forest_zh_flat_kernel(
+        M0_array, M_res, z_steps, checkpoint_step_idx,
+        dc_z_grid, dc_dc_grid, logmass_grid, sigma_grid, sigma_grid_rev, logmass_grid_rev,
+        max_stack, max_out,
+    ):
+        """nb.prange-parallel wrapper: one independent full-population
+        growth per tree index, each writing into its own disjoint slice of
+        the preallocated output arrays -- mirrors
+        pch_trees._grow_forest_pch08_adaptive_kernel's own prange-over-trees
+        pattern."""
+        N = M0_array.shape[0]
+        n_cp = checkpoint_step_idx.shape[0]
+        out_masses = np.zeros((N, n_cp, max_out), dtype=np.float64)
+        out_counts = np.zeros((N, n_cp), dtype=np.int64)
+
+        for i in nb.prange(N):
+            _grow_tree_zh_flat_scalar(
+                M0_array[i], M_res, z_steps, checkpoint_step_idx,
+                dc_z_grid, dc_dc_grid, logmass_grid, sigma_grid, sigma_grid_rev, logmass_grid_rev,
+                out_masses[i], out_counts[i], max_stack,
+            )
+
+        return out_masses, out_counts
+
 else:
     _interp_sorted_zh = None
     _erfcinv_numba = None
     _build_forest_flat_barrier_kernel = None
+    _grow_tree_zh_flat_scalar = None
+    _grow_forest_zh_flat_kernel = None
 
 
 class ZhangHuiMergerTree:
@@ -967,3 +1223,108 @@ class ZhangHuiMergerTree:
             M_res=float(M_res),
         )
         return mass_history, z_steps, smooth_accretion, merger_mass
+
+    # ------------------------------------------------------------------
+    # grow_full_population_numba -- JIT + parallel full-branch-population
+    # growth (see the "Numba full-population kernel" block above
+    # build_forest_numba for the algorithm)
+    # ------------------------------------------------------------------
+
+    def grow_full_population_numba(self, M0, z0, z_max, M_res, checkpoints, n_trees, dz=0.05, max_stack=20_000, max_out=4_000):
+        """
+        Grow n_trees independent full-branch-population realizations of a
+        single initial mass M0, using the closed-form flat-barrier Levy
+        sampler on a fixed dz grid (see the "Numba full-population kernel"
+        module comment above for why no adaptive stepping is needed here,
+        unlike PCH08's own `grow_full_population_numba_adaptive`).
+
+        Drop-in numba replacement for scripts/paper_figs/_treegrowth.py's
+        grow_full_population_zh_flat, looped n_trees times -- same
+        {checkpoint_z: [branch masses]} return convention (one dict per
+        tree), same closed-form math, just compiled and parallelized
+        across trees (nb.prange) instead of a serial per-tree Python loop.
+        Only supports flat-barrier models (checked once via
+        _assert_flat_barrier); raises NotImplementedError otherwise.
+
+        Parameters
+        ----------
+        M0 : float
+            Single initial mass (Msun/h) -- every realization starts here
+            (see PCHMergerTree.grow_full_population_numba_adaptive's own
+            docstring for why this is kept simple rather than per-tree).
+        checkpoints : sequence of float
+            Redshifts at which to record the branch-mass population; each
+            must land exactly on the z0 + n*dz grid (to within 1e-3, same
+            tolerance as _treegrowth._checkpoint_indices), or this raises
+            ValueError -- choose dz accordingly.
+        max_stack, max_out : int
+            Same silent-truncation-guard semantics as
+            PCHMergerTree.grow_full_population_numba_adaptive's own
+            max_stack/max_out (see that method's docstring) -- checked
+            here via the same out_counts>=max_out warning.
+
+        Returns
+        -------
+        list of dict
+            One {checkpoint_z: [branch masses]} dict per tree.
+        """
+        if not _HAVE_NUMBA:
+            raise ImportError(
+                "grow_full_population_numba requires numba, which is not installed. "
+                "Install it with `pip install foraois[numba]`, or use "
+                "scripts/paper_figs/_treegrowth.py's grow_full_population_zh_flat "
+                "instead (same closed-form algorithm, pure Python, no numba needed)."
+            )
+        self._ensure_delta_col_covers(z_max)
+        _assert_flat_barrier(self.model, z_max, self.cosmo_data)
+
+        z_steps = np.arange(z0, z_max + dz * 0.5, dz)
+        checkpoints_sorted = sorted(set(checkpoints))
+        checkpoint_step_idx = np.empty(len(checkpoints_sorted), dtype=np.int64)
+        for k, zc in enumerate(checkpoints_sorted):
+            idx = int(np.argmin(np.abs(z_steps - zc)))
+            if abs(z_steps[idx] - zc) > max(1e-8, 1e-3):
+                raise ValueError(
+                    f"checkpoint z={zc} is not on the dz grid (nearest grid point is "
+                    f"z={z_steps[idx]:.4f}) -- choose dz so that z0 + n*dz hits every "
+                    f"checkpoint exactly."
+                )
+            checkpoint_step_idx[k] = idx
+
+        M0_array = np.full(int(n_trees), float(M0), dtype=np.float64)
+        logmass_grid = self.cosmo_data._logmass
+        sigma_grid = self.cosmo_data._sigma
+
+        out_masses, out_counts = _grow_forest_zh_flat_kernel(
+            M0_array=M0_array,
+            M_res=float(M_res),
+            z_steps=z_steps,
+            checkpoint_step_idx=checkpoint_step_idx,
+            dc_z_grid=self.cosmo_data._dc_z_grid,
+            dc_dc_grid=self.cosmo_data._dc_dc_grid,
+            logmass_grid=logmass_grid,
+            sigma_grid=sigma_grid,
+            sigma_grid_rev=sigma_grid[::-1].copy(),
+            logmass_grid_rev=logmass_grid[::-1].copy(),
+            max_stack=int(max_stack),
+            max_out=int(max_out),
+        )
+
+        if np.any(out_counts >= max_out):
+            n_hit = int(np.sum(np.any(out_counts >= max_out, axis=1)))
+            warnings.warn(
+                f"grow_full_population_numba: {n_hit}/{n_trees} realizations hit "
+                f"max_out={max_out} for at least one checkpoint -- their branch population at "
+                "that checkpoint was silently truncated. Increase max_out and re-run before "
+                "trusting statistics built from this output.",
+                stacklevel=2,
+            )
+
+        results = []
+        for i in range(len(M0_array)):
+            pops = {}
+            for k, zc in enumerate(checkpoints_sorted):
+                c = int(out_counts[i, k])
+                pops[float(zc)] = out_masses[i, k, :c].tolist()
+            results.append(pops)
+        return results
