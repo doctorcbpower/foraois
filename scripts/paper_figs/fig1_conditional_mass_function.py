@@ -277,8 +277,8 @@ def main():
         for row, z1 in enumerate(Z1_VALUES):
             ax = axes[row, col]
 
-            centers, log_f_pch = cmf_histogram(pch_by_z1[z1], M2)
-            _, log_f_zh = cmf_histogram(zh_by_z1[z1], M2)
+            centers, log_f_pch, _ = cmf_histogram(pch_by_z1[z1], M2)
+            _, log_f_zh, _ = cmf_histogram(zh_by_z1[z1], M2)
 
             if args.show_eps_reference:
                 log_f_eps = eps_analytic_cmf(M2, Z0, z1, cosmo_data, log_ratio_grid)
@@ -305,7 +305,7 @@ def main():
             ax.grid(alpha=0.3)
 
     axes[0, -1].legend(fontsize=7, loc="upper right")
-    fig.suptitle("PCH08 Fig. 1 analogue: conditional mass function (no N-body reference available)", fontsize=11)
+#    fig.suptitle("PCH08 Fig. 1 analogue: conditional mass function (no N-body reference available)", fontsize=12)
     fig.tight_layout(rect=[0, 0, 1, 0.97])
     fig.savefig(args.output, dpi=150)
     print(f"Wrote {args.output}")

@@ -108,7 +108,7 @@ def main():
 
     import matplotlib.pyplot as plt
 
-    fig, axes = plt.subplots(1, len(M2_VALUES), figsize=(13, 4), sharey=True)
+    fig, axes = plt.subplots(len(M2_VALUES), 1, figsize=(7, 10), sharex=True)
     # PCH08's own Fig. 3 bins and plots in log10(1+z), not linear z (x-axis
     # log10(1+z); y-axis dn/dlog10(1+z)) -- matched here so the shape is
     # comparable to theirs, not a different quantity in a different
@@ -117,47 +117,48 @@ def main():
     # by the bin width in whatever variable was actually binned).
     bins = np.linspace(0.0, np.log10(1.0 + args.z_max), 21)
 
-    for col, M2 in enumerate(M2_VALUES):
+    found_counts = []  # (M2, n_pch_found, n_zh_found) per row, rolled up into the suptitle instead of a per-panel title
+    for row, M2 in enumerate(M2_VALUES):
         print(f"M2={M2:.2e} ...", flush=True)
         M_res = m_res_for(M2)
 
         target_nupper = None if args.target_nupper < 0 else args.target_nupper
         pch_raw = run_pch08_mainbranch_ensemble(
-            args.config, M2, Z0, args.z_max, M_res, args.dz, args.f_major, args.n_trees, n_jobs=args.n_jobs, seed0=args.seed + col * 100_000,
+            args.config, M2, Z0, args.z_max, M_res, args.dz, args.f_major, args.n_trees, n_jobs=args.n_jobs, seed0=args.seed + row * 100_000,
             label=f"PCH08 M2={M2:.2e}", target_nupper=target_nupper,
         )
         pch_z = [z for z in pch_raw if z is not None]
 
         zh_raw = run_zh_mainbranch_ensemble(
             args.config, M2, Z0, args.z_max, M_res, args.dz, args.f_major, args.n_trees,
-            model="cdm", N_grid=args.n_grid, S_max_factor=args.s_max_factor, n_jobs=args.n_jobs, seed0=args.seed + col * 100_000 + 1_000_000,
+            model="cdm", N_grid=args.n_grid, S_max_factor=args.s_max_factor, n_jobs=args.n_jobs, seed0=args.seed + row * 100_000 + 1_000_000,
             label=f"Zhang-Hui M2={M2:.2e}",
         )
         zh_z = [z for z in zh_raw if z is not None]
         pch_x = np.log10(1.0 + np.asarray(pch_z))
         zh_x = np.log10(1.0 + np.asarray(zh_z))
+        found_counts.append((M2, len(pch_z), len(zh_z)))
 
-        ax = axes[col]
+        ax = axes[row]
         if pch_z:
             ax.hist(pch_x, bins=bins, histtype="step", density=True, color="#1f77b4", lw=1.8, label="PCH08")
         if zh_z:
             ax.hist(zh_x, bins=bins, histtype="step", density=True, color="#9467bd", lw=1.8, label="Zhang-Hui")
-        ax.set_title(
-            f"$M_2={M2:.2e}\\,M_\\odot/h$\n"
-            f"(major merger found in {len(pch_z)}/{args.n_trees} PCH08, {len(zh_z)}/{args.n_trees} ZH trees)",
-            fontsize=9,
-        )
-        ax.set_xlabel(r"$\log_{10}(1+z)$")
-        if col == 0:
-            ax.set_ylabel(r"$dn/d\log_{10}(1+z)$")
+        ax.set_title(f"$M_2={M2:.2e}\\,M_\\odot/h$", fontsize=9)
+        ax.set_ylabel(r"$dn/d\log_{10}(1+z)$")
         ax.grid(alpha=0.3)
 
+    axes[-1].set_xlabel(r"$\log_{10}(1+z)$")
     axes[0].legend(fontsize=9)
-    fig.suptitle(
-        f"PCH08 Fig. 3 analogue: major-merger ($f_{{\\rm major}}={args.f_major}$) redshift (no N-body reference available)",
-        fontsize=11,
-    )
-    fig.tight_layout(rect=[0, 0, 1, 0.90])
+
+    found_lines = "\n".join(f"$M_2={M2:.2e}$: {n_pch}/{args.n_trees} PCH08, {n_zh}/{args.n_trees} ZH" for M2, n_pch, n_zh in found_counts)
+#    fig.suptitle(
+#        f"PCH08 Fig. 4 analogue: major-merger ($f_{{\\rm major}}={args.f_major}$) redshift (no N-body reference available)\n"
+#        f"major merger found in --\n{found_lines}",
+#        fontsize=9,
+#    )
+    fig.tight_layout()
+    fig.subplots_adjust(top=0.85)
     fig.savefig(args.output, dpi=150)
     print(f"Wrote {args.output}")
 

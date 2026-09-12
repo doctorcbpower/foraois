@@ -970,7 +970,7 @@ def grow_full_population_pch08_batch(
     ]
 
 
-def cmf_histogram(all_masses_by_realization, M2, n_bins=20, log_range=(-4.5, 0.05)):
+def cmf_histogram(all_masses_by_realization, M2, n_bins=20, log_range=(-4.5, 0.05), min_count=30):
     """
     Build a PCH08-Fig-1-style conditional mass function: log10(f_cmf) vs
     log10(M1/M2), where f_cmf per bin is the total mass in that bin's
@@ -979,6 +979,20 @@ def cmf_histogram(all_masses_by_realization, M2, n_bins=20, log_range=(-4.5, 0.0
     of a number-weighted histogram, matching PCH08's own f_cmf definition
     (Eq. 1: a mass FRACTION density, not a number density).
 
+    Being mass-weighted, this estimator has a heavy right tail: near
+    M1~M2, a single tree that happens to retain almost all of M2's mass in
+    one branch dominates that bin's sum outright, so a bin's value can
+    swing by an order of magnitude between otherwise-equivalent runs even
+    at large --n-trees (confirmed empirically: at n_trees=2000, M2=1e12,
+    z1=4, PCH08 has just 8 progenitors landing in the second-to-last
+    nonempty bin and 0 beyond it, while a 10x increase in n_trees moved
+    that bin's value further rather than converging it). min_count masks
+    (to NaN) any bin whose raw progenitor COUNT (not mass) falls below
+    this threshold, so a caller doesn't plot a curve segment set by a
+    handful of rare events as if it meant something -- this was previously
+    only a docstring claim ("restrict to bins with >=30 pooled progenitor
+    counts") with nothing in the code actually enforcing it.
+
     Parameters
     ----------
     all_masses_by_realization : list[list[float]]
@@ -986,17 +1000,26 @@ def cmf_histogram(all_masses_by_realization, M2, n_bins=20, log_range=(-4.5, 0.0
     M2 : float
         The descendant mass all realizations were grown from.
     n_bins, log_range : histogram binning in log10(M1/M2).
+    min_count : int
+        Bins with fewer than this many pooled progenitors are masked to
+        NaN, regardless of how much mass they happen to carry. Pass 0 to
+        disable masking (the previous behaviour, masking only truly empty
+        bins).
 
     Returns
     -------
-    bin_centers, log10_f_cmf : arrays (log10_f_cmf is -inf-safe: empty
-        bins are masked to NaN rather than plotted as -inf).
+    bin_centers, log10_f_cmf, counts : arrays (log10_f_cmf is -inf-safe:
+        empty or count-starved bins are masked to NaN rather than plotted
+        as -inf or as a rare-event-dominated value; counts is the raw,
+        unmasked per-bin progenitor count, for callers that want to report
+        or further filter on it).
     """
     all_masses = np.concatenate([np.asarray(m) for m in all_masses_by_realization if len(m)])
     log_ratio = np.log10(all_masses / M2)
 
     edges = np.linspace(log_range[0], log_range[1], n_bins + 1)
     mass_per_bin, _ = np.histogram(all_masses, bins=M2 * 10 ** edges, weights=all_masses)
+    counts, _ = np.histogram(log_ratio, bins=edges)
 
     n_real = len(all_masses_by_realization)
     d_ln_ratio = (edges[1] - edges[0]) * np.log(10.0)
@@ -1005,8 +1028,8 @@ def cmf_histogram(all_masses_by_realization, M2, n_bins=20, log_range=(-4.5, 0.0
     centers = 0.5 * (edges[:-1] + edges[1:])
     with np.errstate(divide="ignore"):
         log_f_cmf = np.log10(f_cmf)
-    log_f_cmf[mass_per_bin == 0] = np.nan
-    return centers, log_f_cmf
+    log_f_cmf[counts < max(min_count, 1)] = np.nan
+    return centers, log_f_cmf, counts
 
 
 def eps_analytic_cmf(M2, z2, z1, cosmo_data, log_ratio_grid):
