@@ -282,10 +282,10 @@ def main():
 
             if args.show_eps_reference:
                 log_f_eps = eps_analytic_cmf(M2, Z0, z1, cosmo_data, log_ratio_grid)
-                ax.plot(log_ratio_grid, log_f_eps, "-", color="0.6", lw=1.2, label="unmodified EPS (analytic, NOT a fair comparison -- see docstring)")
+                ax.plot(log_ratio_grid, log_f_eps, "-", color="0.6", lw=1.8, label="unmodified EPS (analytic, NOT a fair comparison -- see docstring)")
 
-            ax.step(centers, log_f_pch, where="mid", color="#1f77b4", lw=1.5, label="PCH08 (Monte Carlo)")
-            ax.step(centers, log_f_zh, where="mid", color="#9467bd", lw=1.5, label="Zhang-Hui (Monte Carlo)")
+            ax.step(centers, log_f_pch, where="mid", color="#1f77b4", lw=2.0, label="PCH08 (Monte Carlo)")
+            ax.step(centers, log_f_zh, where="mid", color="#9467bd", lw=2.0, label="Zhang-Hui (Monte Carlo)")
 
             # Auto-extend the y floor to whatever the data actually spans (capped
             # at a sane minimum) -- a fixed floor clips most of the curve at high
@@ -297,14 +297,15 @@ def main():
             ax.set_ylim(y_floor, 0.5)
             ax.set_xlim(-4.5, 0.05)
             if row == 0:
-                ax.set_title(f"$M_2={M2:.2e}\\,M_\\odot/h$", fontsize=10)
+                ax.set_title(f"$M_2={M2:.2e}\\,M_\\odot/h$", fontsize=12)
             if col == 0:
-                ax.set_ylabel(f"$z_1={z1}$\n" + r"$\log_{10} f_{\rm cmf}$", fontsize=9)
+                ax.set_ylabel(f"$z_1={z1}$\n" + r"$\log_{10} f_{\rm cmf}$", fontsize=12)
             if row == len(Z1_VALUES) - 1:
-                ax.set_xlabel(r"$\log_{10}(M_1/M_2)$")
+                ax.set_xlabel(r"$\log_{10}(M_1/M_2)$", fontsize=13)
+            ax.tick_params(labelsize=10)
             ax.grid(alpha=0.3)
 
-    axes[0, -1].legend(fontsize=7, loc="upper right")
+    axes[0, -1].legend(fontsize=9, loc="upper right")
 #    fig.suptitle("PCH08 Fig. 1 analogue: conditional mass function (no N-body reference available)", fontsize=12)
     fig.tight_layout(rect=[0, 0, 1, 0.97])
     fig.savefig(args.output, dpi=150)

@@ -148,7 +148,7 @@ def build_figure(pch_alive, zh_alive, stats, file_name="pch08_vs_zhanghui"):
         pch_alive,
         bins=bins,
         histtype="step",
-        lw=1.6,
+        lw=2.4,
         color="#4C72B0",
         label="PCH08 (fitted rate)",
     )
@@ -156,24 +156,30 @@ def build_figure(pch_alive, zh_alive, stats, file_name="pch08_vs_zhanghui"):
         zh_alive,
         bins=bins,
         histtype="step",
-        lw=1.6,
+        lw=2.4,
         color="#C44E52",
         label="Zhang-Hui (exact rate)",
     )
-    ax.axvline(pch_alive.mean(), color="#4C72B0", ls="--", lw=1)
-    ax.axvline(zh_alive.mean(), color="#C44E52", ls="--", lw=1)
+    ax.axvline(pch_alive.mean(), color="#4C72B0", ls="--", lw=1.6)
+    ax.axvline(zh_alive.mean(), color="#C44E52", ls="--", lw=1.6)
     ax.set_xscale("log")
     ax.set_xlabel(
         rf"surviving main-progenitor mass at $z_{{\rm max}}={stats['z_max']:g}$ "
-        r"[$M_\odot/h$]"
+        r"[$M_\odot/h$]",
+        fontsize=15,
     )
-    ax.set_ylabel("N trees")
-    ax.set_title(
-        f"PCH08 vs. barrier-agnostic solver (n={stats['n_trees']:,})\n"
-        rf"mean-mass difference = {stats['mean_mass_discrepancy_pct']:+.1f}%",
+    ax.set_ylabel("N trees", fontsize=15)
+    ax.tick_params(labelsize=12)
+    ax.text(
+        0.03,
+        0.95,
+        f"$n={stats['n_trees']:,}$\nmean-mass difference $= {stats['mean_mass_discrepancy_pct']:+.1f}\\%$",
+        transform=ax.transAxes,
+        ha="left",
+        va="top",
         fontsize=11,
     )
-    ax.legend(fontsize=8)
+    ax.legend(fontsize=10)
     fig.tight_layout()
     fig.savefig(f"{file_name}.png", dpi=150)
     return f"{file_name}.png"
