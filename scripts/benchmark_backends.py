@@ -200,12 +200,14 @@ def build_figure(results, output_path):
             yerr=serial_std[serial_mask] if serial_std is not None else None,
             fmt="o-",
             color="#d62728",
-            capsize=2,
+            capsize=3,
+            lw=2.2,
+            markersize=7,
             label="PCH08 serial",
         )
 
     ax.errorbar(
-        N_arr, results["numpy"], yerr=_std_or_none("numpy"), fmt="s-", color="#1f77b4", capsize=2, label="PCH08 numpy"
+        N_arr, results["numpy"], yerr=_std_or_none("numpy"), fmt="s-", color="#1f77b4", capsize=3, lw=2.2, markersize=7, label="PCH08 numpy"
     )
     ax.errorbar(
         N_arr,
@@ -213,7 +215,9 @@ def build_figure(results, output_path):
         yerr=_std_or_none("numba"),
         fmt="^-",
         color="#2ca02c",
-        capsize=2,
+        capsize=3,
+        lw=2.2,
+        markersize=7,
         label="PCH08 numba (JIT warm)",
     )
     ax.errorbar(
@@ -222,19 +226,18 @@ def build_figure(results, output_path):
         yerr=_std_or_none("zh_numpy"),
         fmt="d-",
         color="#9467bd",
-        capsize=2,
+        capsize=3,
+        lw=2.2,
+        markersize=7,
         label="Zhang-Hui numpy (closed-form)",
     )
 
     ax.set_xscale("log")
     ax.set_yscale("log")
-    ax.set_xlabel(r"$N$ trees")
-    ax.set_ylabel("wall time [s]")
-    title = f"Backend scaling ($z_0={Z0}$-$z_{{\\rm max}}={Z_MAX}$, $dz={DZ}$)"
-    if repeats > 1:
-        title += f", mean $\\pm$ std of {repeats} repeats"
-    ax.set_title(title)
-    ax.legend(fontsize=9)
+    ax.set_xlabel(r"$N$ trees", fontsize=15)
+    ax.set_ylabel("wall time [s]", fontsize=15)
+    ax.tick_params(labelsize=12)
+    ax.legend(fontsize=10)
     ax.grid(alpha=0.3, which="both")
     fig.tight_layout()
     fig.savefig(output_path, dpi=150)

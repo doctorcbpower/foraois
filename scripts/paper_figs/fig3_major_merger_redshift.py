@@ -141,24 +141,18 @@ def main():
 
         ax = axes[row]
         if pch_z:
-            ax.hist(pch_x, bins=bins, histtype="step", density=True, color="#1f77b4", lw=1.8, label="PCH08")
+            ax.hist(pch_x, bins=bins, histtype="step", density=True, color="#1f77b4", lw=2.4, label="PCH08")
         if zh_z:
-            ax.hist(zh_x, bins=bins, histtype="step", density=True, color="#9467bd", lw=1.8, label="Zhang-Hui")
-        ax.set_title(f"$M_2={M2:.2e}\\,M_\\odot/h$", fontsize=9)
-        ax.set_ylabel(r"$dn/d\log_{10}(1+z)$")
+            ax.hist(zh_x, bins=bins, histtype="step", density=True, color="#9467bd", lw=2.4, label="Zhang-Hui")
+        ax.set_title(f"$M_2={M2:.2e}\\,M_\\odot/h$", fontsize=12)
+        ax.set_ylabel(r"$dn/d\log_{10}(1+z)$", fontsize=14)
+        ax.tick_params(labelsize=11)
         ax.grid(alpha=0.3)
 
-    axes[-1].set_xlabel(r"$\log_{10}(1+z)$")
-    axes[0].legend(fontsize=9)
+    axes[-1].set_xlabel(r"$\log_{10}(1+z)$", fontsize=14)
+    axes[0].legend(fontsize=10)
 
-    found_lines = "\n".join(f"$M_2={M2:.2e}$: {n_pch}/{args.n_trees} PCH08, {n_zh}/{args.n_trees} ZH" for M2, n_pch, n_zh in found_counts)
-#    fig.suptitle(
-#        f"PCH08 Fig. 4 analogue: major-merger ($f_{{\\rm major}}={args.f_major}$) redshift (no N-body reference available)\n"
-#        f"major merger found in --\n{found_lines}",
-#        fontsize=9,
-#    )
     fig.tight_layout()
-    fig.subplots_adjust(top=0.85)
     fig.savefig(args.output, dpi=150)
     print(f"Wrote {args.output}")
 

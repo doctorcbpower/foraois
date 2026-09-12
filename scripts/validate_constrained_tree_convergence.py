@@ -147,13 +147,13 @@ def build_figure(results, n_show=12, file_name="constrained_vs_unconstrained"):
 
     fig, ax = plt.subplots(figsize=(6.5, 4.8))
     for zs, ms in results["unconstrained_histories"][:n_show]:
-        ax.plot(zs, ms, color="#4C72B0", alpha=0.30, lw=1.0)
+        ax.plot(zs, ms, color="#4C72B0", alpha=0.30, lw=1.6)
     ax.plot([], [], color="#4C72B0", label="unconstrained")
 
     colors = {"typical (median)": "#55A868", "extreme (p99)": "#C44E52"}
     for label, block in results["constrained"].items():
         for zs, ms in block["histories"][:n_show]:
-            ax.plot(zs, ms, color=colors[label], alpha=0.55, lw=1.2)
+            ax.plot(zs, ms, color=colors[label], alpha=0.55, lw=1.8)
         ax.plot(
             [],
             [],
@@ -168,14 +168,14 @@ def build_figure(results, n_show=12, file_name="constrained_vs_unconstrained"):
             marker="*",
             s=90,
             edgecolor="k",
-            linewidth=0.5,
+            linewidth=0.8,
         )
 
     ax.set_yscale("log")
-    ax.set_xlabel("redshift $z$")
-    ax.set_ylabel(r"main-progenitor mass [$M_\odot/h$]")
-    ax.set_title("Brownian-bridge-constrained vs. unconstrained growth histories")
-    ax.legend(fontsize=8)
+    ax.set_xlabel("redshift $z$", fontsize=15)
+    ax.set_ylabel(r"main-progenitor mass [$M_\odot/h$]", fontsize=15)
+    ax.tick_params(labelsize=12)
+    ax.legend(fontsize=10)
     fig.tight_layout()
     fig.savefig(f"{file_name}.png", dpi=150)
     return f"{file_name}.png"

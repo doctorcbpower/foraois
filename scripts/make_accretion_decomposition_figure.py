@@ -85,11 +85,11 @@ def build_figure(
         colors=["#4C72B0", "#DD8452"],
         alpha=0.85,
     )
-    ax.plot(z_steps_post, total, "k--", lw=1.2, label="total mass accreted (M0 - M(z))")
-    ax.set_xlabel("redshift $z$")
-    ax.set_ylabel(r"accreted mass [$M_\odot/h$]")
-    ax.set_title("Smooth accretion vs. discrete mergers (single tree, CDM)")
-    ax.legend(fontsize=8)
+    ax.plot(z_steps_post, total, "k--", lw=2.2, label="total mass accreted (M0 - M(z))")
+    ax.set_xlabel("redshift $z$", fontsize=15)
+    ax.set_ylabel(r"accreted mass [$M_\odot/h$]", fontsize=15)
+    ax.tick_params(labelsize=12)
+    ax.legend(fontsize=10)
     fig.tight_layout()
     fig.savefig(f"{file_name}.png", dpi=150)
     return f"{file_name}.png"

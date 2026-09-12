@@ -99,9 +99,12 @@ _RC = {
     "legend.edgecolor": _EDGE,
     "legend.labelcolor": _FG,
     "legend.framealpha": 0.9,
-    "lines.linewidth": 1.4,
+    "lines.linewidth": 2.2,
     "font.family": "serif",
-    "font.size": 10,
+    "font.size": 14,
+    "axes.labelsize": 15,
+    "xtick.labelsize": 12,
+    "ytick.labelsize": 12,
 }
 
 
@@ -125,11 +128,11 @@ def _save_or_show(fig, file_name):
 
 
 def _decorate(ax, xlabel, ylabel, title=None):
-    ax.set_xlabel(xlabel, labelpad=5)
-    ax.set_ylabel(ylabel, labelpad=5)
+    ax.set_xlabel(xlabel, labelpad=5, fontsize=15)
+    ax.set_ylabel(ylabel, labelpad=5, fontsize=15)
     if title:
         ax.set_title(title, pad=7)
-    ax.tick_params(labelsize=8)
+    ax.tick_params(labelsize=12)
 
 
 # ---------------------------------------------------------------------------
@@ -812,7 +815,7 @@ def plot_dendrogram(
             continue
         d = by_id[n["descendant_id"]]
         edge_segs.append([(x_pos[d["id"]], y_of[d["id"]]), (x_pos[n["id"]], y_of[n["id"]])])
-    ax.add_collection(LineCollection(edge_segs, colors=_DIM, linewidths=0.6, zorder=1))
+    ax.add_collection(LineCollection(edge_segs, colors=_DIM, linewidths=1.0, zorder=1))
 
     # main branch: follow is_main links from the root
     main_ids = set()
@@ -835,7 +838,7 @@ def plot_dendrogram(
         s=sizes[~is_main_arr],
         facecolors="white",
         edgecolors=_EDGE,
-        linewidths=0.7,
+        linewidths=1.0,
         zorder=2,
     )
     ax.scatter(
@@ -844,7 +847,7 @@ def plot_dendrogram(
         s=sizes[is_main_arr],
         facecolors=highlight_color,
         edgecolors=_EDGE,
-        linewidths=0.7,
+        linewidths=1.0,
         zorder=3,
     )
 
@@ -856,7 +859,7 @@ def plot_dendrogram(
             s=400,
             facecolors=_YELLOW,
             edgecolors=_EDGE,
-            linewidths=0.8,
+            linewidths=1.2,
             zorder=4,
         )
 
@@ -873,9 +876,7 @@ def plot_dendrogram(
 
     for spine in ("top", "right", "bottom"):
         ax.spines[spine].set_visible(False)
-    ax.tick_params(axis="y", labelsize=10)
-
-    ax.set_title(f"Merger tree  (N={len(nodes):,} nodes shown)", pad=10)
+    ax.tick_params(axis="y", labelsize=12)
 
     _save_or_show(fig, file_name)
 
@@ -1002,28 +1003,26 @@ def plot_dm_model_comparison(models, reference, file_name=None):
     ax = axes[0]
     for i, (label, (_cosmo_data, pk_data)) in enumerate(models.items()):
         c = palette[i % len(palette)]
-        ax.loglog(pk_data["k"], pk_data["Pk"][0], color=c, lw=1.5, label=label)
+        ax.loglog(pk_data["k"], pk_data["Pk"][0], color=c, lw=2.3, label=label)
     _decorate(
         ax,
         r"$k\;\;[h\,\mathrm{Mpc}^{-1}]$",
         r"$P(k)\;\;[\mathrm{Mpc}^3\,h^{-3}]$",
-        "Linear power spectrum",
     )
-    ax.legend(fontsize=8)
+    ax.legend(fontsize=10)
 
     ax2 = axes[1]
     for i, (label, (cosmo_data, _pk_data)) in enumerate(models.items()):
         c = palette[i % len(palette)]
         sigma = cosmo_data.sigma_at_logmass(logm)
-        ax2.plot(logm, sigma / ref_sigma, color=c, lw=1.5, label=label)
-    ax2.axhline(1.0, color=_DIM, lw=0.8, ls="--")
+        ax2.plot(logm, sigma / ref_sigma, color=c, lw=2.3, label=label)
+    ax2.axhline(1.0, color=_DIM, lw=1.2, ls="--")
     _decorate(
         ax2,
         r"$\log_{10}(M\,/\,[M_\odot\,h^{-1}])$",
         rf"$\sigma(M)\,/\,\sigma_{{\rm {reference}}}(M)$",
-        "Mass variance relative to reference",
     )
-    ax2.legend(fontsize=8)
+    ax2.legend(fontsize=10)
 
     _save_or_show(fig, file_name)
 
@@ -1130,7 +1129,7 @@ def plot_branching_rate_validation(
         empirical_density,
         where="post",
         color=_BLUE,
-        lw=1.5,
+        lw=2.3,
         label=f"Monte Carlo ($N={n_trials:,}$)",
     )
 
@@ -1139,7 +1138,7 @@ def plot_branching_rate_validation(
         q_fine,
         rate_density(q_fine),
         color=_ORANGE,
-        lw=1.8,
+        lw=2.6,
         ls="--",
         label="analytic $S(q)R(q)$ (quadrature)",
     )
@@ -1150,9 +1149,8 @@ def plot_branching_rate_validation(
         ax,
         r"$q = M_1/M_2$",
         r"$\mathrm{d}N_{\rm accepted}/\mathrm{d}q$ per trial",
-        "Branching-rate sampling validation",
     )
-    ax.legend(fontsize=8)
+    ax.legend(fontsize=10)
     ax.text(
         0.97,
         0.95,
@@ -1162,7 +1160,7 @@ def plot_branching_rate_validation(
         transform=ax.transAxes,
         ha="right",
         va="top",
-        fontsize=8,
+        fontsize=10,
         color=_DIM,
     )
 
