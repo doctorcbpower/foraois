@@ -861,6 +861,16 @@ class CosmoData:
         decreases with mass; PCHMergerTree's alpha_grid takes abs() of
         this.
 
+        Both paths compute d ln(sigma^2)/d ln(M) internally (that's what
+        falls out naturally from differentiating the sigma^2(R) integral)
+        and then halve it, since d ln(S) = 2 d ln(sigma) for S = sigma^2.
+        That halving was missing prior to a fix verified by direct
+        finite-difference comparison against sigma_at_logmass (this
+        function returned exactly 2x the true d ln(sigma)/d ln(M) at every
+        mass tested beforehand) -- see the top-hat/gaussian path's own
+        inline comment and _dlogsigma_dlogmass_sharp_k's docstring for the
+        derivation.
+
         Parameters
         ----------
         pk_data : dict
@@ -898,23 +908,37 @@ class CosmoData:
 
         W, dWdR = self.wf._prepare_windows(radii, k_grid)
 
+        # NOTE: despite the variable name, "sigma" here is actually
+        # S = sigma^2 (the mass variance itself, not its square root) --
+        # see get_mass_variance's own (1/2pi^2) prefactor, matched here.
+        # "dsigmadr" is correspondingly dS/dR, not d(sigma)/dR (chain rule
+        # on W^2 inside the S(R) integral gives the extra factor of 2 that
+        # cancels the get_mass_variance prefactor's 1/2). d ln S/d ln R
+        # = R*(dS/dR)/S is therefore what (1/3)*radii*dsigmadr/sigma below
+        # computes -- correct for d ln S/d ln M, but this function is
+        # named/documented (and consumed throughout pch_trees.py's
+        # alpha_grid) as d ln(sigma)/d ln(M) = (1/2) d ln S/d ln M, hence
+        # the extra factor of 1/2 (an undiagnosed factor-of-2 bug prior to
+        # this fix -- verified by direct finite-difference comparison
+        # against sigma_at_logmass: the unfixed formula returned exactly
+        # 2x the true d ln(sigma)/d ln(M) at every mass tested).
         integrand_vals = k_grid[None, :] ** 3 * Pk_vals[None, :] * W * dWdR
         dsigmadr = (1.0 / np.pi**2) * integrate.romb(integrand_vals, dx=dx, show=False)
 
         integrand_vals = k_grid[None, :] ** 3 * Pk_vals[None, :] * W * W
         sigma = (1.0 / 2.0 / np.pi**2) * integrate.romb(integrand_vals, dx=dx, show=False)
 
-        result = (1.0 / 3.0) * radii * dsigmadr / sigma
+        result = (1.0 / 6.0) * radii * dsigmadr / sigma
 
         return result if result.size > 1 else result[0]
 
     def _dlogsigma_dlogmass_sharp_k(self, pk_data, radii):
         """
-        Closed-form d ln(sigma^2) / d ln M for the sharp-k window (matching
-        this module's existing convention throughout -- see
-        dlogsigma_dlogmass above -- of returning d ln S / d ln M with
-        S = sigma^2, not d ln sigma / d ln M; verified empirically for the
-        top-hat case via finite differences before this was written).
+        Closed-form d ln(sigma) / d ln M for the sharp-k window, matching
+        this module's documented convention (dlogsigma_dlogmass's own
+        docstring, and every consumer in pch_trees.py's alpha_grid) --
+        verified empirically for the top-hat case via finite differences
+        against sigma_at_logmass.
 
         With W(kR) = Theta(alpha - kR), sigma^2(R) collapses to a plain
         definite integral with a variable upper limit k0 = alpha/R:
@@ -928,6 +952,12 @@ class CosmoData:
 
             dS/dR = -k0^3 P(k0) / (2 pi^2 R)
             d ln S / d ln M = (1/3) d ln S / d ln R = -k0^3 P(k0) / (6 pi^2 S)
+            d ln sigma / d ln M = (1/2) d ln S / d ln M = -k0^3 P(k0) / (12 pi^2 S)
+
+        (S = sigma^2, so d ln S = 2 d ln sigma -- this halving step was
+        missing prior to this fix, a factor-of-2 bug shared with the
+        top-hat/gaussian path above; see that function's own comment for
+        the numerical verification.)
 
         P(k0) uses the same true log-log P(k) interpolant (_pk_interp_log)
         that _sigma2_sharp_k integrates against, rather than the coarser
@@ -947,7 +977,7 @@ class CosmoData:
         P_at_k0 = np.exp(self._pk_interp_log(np.log(np.minimum(k0, k_max))))
         S = self._sigma2_sharp_k(radii)
 
-        result = -(k0**3 * P_at_k0) / (6.0 * np.pi**2 * S)
+        result = -(k0**3 * P_at_k0) / (12.0 * np.pi**2 * S)
 
         # Once k0 = alpha/R exceeds pk_kmax, _sigma2_sharp_k clamps the
         # integral there too -- S stops changing with R at all in that
