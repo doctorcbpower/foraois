@@ -114,8 +114,12 @@ def test_expected_splits_flags_a_too_coarse_step(tree_generator):
     # A deliberately extreme case (large halo, fine resolution, coarse dz)
     # should trip well above PCH08's own recommended adaptive-stepping
     # target of ~0.1 -- this is exactly the situation the diagnostic exists
-    # to catch before trusting build_forest_* output.
-    _, Nupper, _ = diagnostics.expected_splits_per_step(tree_generator, M0=1e12, z0=0.0, z_max=1.0, M_res=1e9, dz=0.2)
+    # to catch before trusting build_forest_* output. dz=0.5 (not the
+    # previous 0.2) after fixing dlogsigma_dlogmass's factor-of-2 bug
+    # (alpha_grid was d ln(sigma^2)/d ln M, not d ln(sigma)/d ln M): the
+    # corrected, smaller alpha roughly halves Nupper at fixed dz, so dz=0.2
+    # no longer clears this test's >1.0 threshold (it now peaks at ~0.51).
+    _, Nupper, _ = diagnostics.expected_splits_per_step(tree_generator, M0=1e12, z0=0.0, z_max=1.0, M_res=1e9, dz=0.5)
     assert np.nanmax(Nupper) > 1.0
 
 
@@ -169,7 +173,11 @@ def test_sampling_consistency_rejects_nupper_above_one(tree_generator):
     # a factor of Nupper -- the same breakdown expected_splits_per_step
     # warns about, not a sampler bug. check_sampling_consistency should
     # refuse to run (not report a confusing "failure") in that regime.
-    terms = tree_generator.branching_rate_terms(1e12, 1e9, delta0=1.68, d_omega=0.2)
+    # d_omega=0.5 (not the previous 0.2) after fixing dlogsigma_dlogmass's
+    # factor-of-2 bug -- see test_expected_splits_flags_a_too_coarse_step's
+    # comment for why the corrected, smaller alpha needs a larger d_omega
+    # to reach the same Nupper>=1 regime.
+    terms = tree_generator.branching_rate_terms(1e12, 1e9, delta0=1.68, d_omega=0.5)
     assert terms["Nupper"] >= 1.0  # sanity: this test needs that regime
 
     with pytest.raises(ValueError, match="Nupper"):
@@ -178,7 +186,7 @@ def test_sampling_consistency_rejects_nupper_above_one(tree_generator):
             M2=1e12,
             M_res=1e9,
             delta0=1.68,
-            d_omega=0.2,
+            d_omega=0.5,
             n_trials=1000,
         )
 

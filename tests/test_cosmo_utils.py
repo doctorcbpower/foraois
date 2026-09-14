@@ -170,11 +170,15 @@ def test_dlogsigma_dlogmass_sharp_k_matches_power_law_exponent(cosmo_data, synth
     # synthetic_pk_data is a pure power law P(k) = A k^n (n=-2). For the
     # sharp-k window, sigma^2(R) = 1/(2 pi^2) integral_0^{alpha/R} k^2 P(k) dk
     # is analytically a power law in R (hence in M), giving an exact,
-    # mass-independent answer for d ln(sigma^2)/d ln M = -(n+3)/3 -- a
+    # mass-independent answer for d ln(sigma^2)/d ln M = -(n+3)/3, i.e.
+    # d ln(sigma)/d ln M = -(n+3)/6 (half that, since sigma^2's log-derivative
+    # is twice sigma's) -- dlogsigma_dlogmass is documented/consumed
+    # throughout pch_trees.py's alpha_grid as d ln(sigma)/d ln M, not
+    # d ln(sigma^2)/d ln M, so this checks the halved value. This is a
     # stronger check than a finite-difference comparison, since it pins
     # down the actual value, not just self-consistency.
     n = -2.0
-    expected = -(n + 3.0) / 3.0
+    expected = -(n + 3.0) / 6.0
     # masses chosen so k0 = alpha/R stays comfortably below pk_kmax=10
     # (PLANCK_LIKE fixture) -- see the separate pk_kmax-clamp test below for
     # what happens once it doesn't.
@@ -190,7 +194,9 @@ def test_dlogsigma_dlogmass_sharp_k_matches_finite_difference(cosmo_data, synthe
     R1 = cosmo_data.get_radius(mass * (1 + eps))
     S0 = cosmo_data.get_mass_variance(synthetic_pk_data, radius=R0, window_function_type="sharp_k")
     S1 = cosmo_data.get_mass_variance(synthetic_pk_data, radius=R1, window_function_type="sharp_k")
-    fd = (np.log(S1) - np.log(S0)) / eps
+    # dlogsigma_dlogmass returns d ln(sigma)/d ln M, not d ln(S)/d ln M --
+    # finite-difference sigma = sqrt(S), not S itself.
+    fd = (np.log(np.sqrt(S1)) - np.log(np.sqrt(S0))) / eps
 
     analytic = cosmo_data.dlogsigma_dlogmass(synthetic_pk_data, mass=mass, window_function_type="sharp_k")
     assert analytic == pytest.approx(fd, rel=1e-3)
