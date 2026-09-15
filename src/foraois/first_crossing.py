@@ -221,6 +221,28 @@ def simulate_random_walk_first_crossings(B, S_max, dS, n_walks, rng=None):
     the S at which each first crosses the barrier B(S). Mirrors Zhang &
     Hui's own validation (their Figure 2: exact solution vs Monte Carlo).
 
+    NORMALIZATION WARNING -- read before computing a crossing probability
+    from this function's output. The returned array's LENGTH is the
+    number of walks that crossed before S_max, not n_walks: any walk that
+    never crosses within the truncated S_max range is silently omitted
+    (this is deliberate -- there is no first-crossing S to report for it
+    -- but it makes the *count* of returned values a biased denominator).
+    To estimate P(cross by some S0 <= S_max) from this output, divide by
+    n_walks (the true, full-ensemble denominator), NOT by
+    len(simulate_random_walk_first_crossings(...)):
+
+        first_crossings = simulate_random_walk_first_crossings(B, S_max, dS, n_walks)
+        p_cross_by_S0 = np.sum(first_crossings <= S0) / n_walks   # correct
+        p_cross_by_S0 = np.sum(first_crossings <= S0) / len(first_crossings)  # WRONG -- inflates
+                                                                                # the estimate by
+                                                                                # 1/P(cross by S_max)
+
+    This is not a hypothetical trap: an earlier validation script made
+    exactly this mistake (dividing by the crossed-only count) and got a
+    ~1.65x-inflated crossing probability that looked like a genuine
+    codebase bug until traced back to the normalization, at a barrier/S_max
+    combination where only ~60% of walks crossed before truncation.
+
     Parameters
     ----------
     B : callable
@@ -236,7 +258,9 @@ def simulate_random_walk_first_crossings(B, S_max, dS, n_walks, rng=None):
     -------
     np.ndarray
         The first-crossing S value for each walk that crossed before
-        S_max (walks that never cross within S_max are omitted).
+        S_max (walks that never cross within S_max are omitted -- see the
+        NORMALIZATION WARNING above before dividing by this array's
+        length to estimate a probability).
     """
     rng = rng if rng is not None else np.random.default_rng()
 
@@ -253,4 +277,9 @@ def simulate_random_walk_first_crossings(B, S_max, dS, n_walks, rng=None):
         first_crossing_S[newly_crossed] = S_grid[i]
         crossed |= newly_crossed
 
+    # NaN entries are walks that never crossed within S_max -- dropping
+    # them here means len(return value) != n_walks; see this function's
+    # docstring ("NORMALIZATION WARNING") before dividing by the returned
+    # array's length to estimate a crossing probability -- divide by the
+    # caller's own n_walks instead.
     return first_crossing_S[~np.isnan(first_crossing_S)]
