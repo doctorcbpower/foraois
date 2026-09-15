@@ -101,6 +101,7 @@ See [notebooks/foraois_demo.ipynb](notebooks/foraois_demo.ipynb) for a full inte
 - [docs/MODELS.md](docs/MODELS.md) -- the governing equations, config reference (cosmology, dark matter models, window functions), and full CLI reference (`--algorithm`/`--backend` support matrix).
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) -- module-by-module package structure.
 - [docs/TESTING.md](docs/TESTING.md) -- what the test suite covers and how to run it.
+- [docs/PAPER_FIGURES.md](docs/PAPER_FIGURES.md) -- which script reproduces which figure in the software-release paper, and the exact command used for each.
 - [ROADMAP.md](ROADMAP.md) -- known gaps and open research questions.
 
 ## Interactive exploration
