@@ -22,8 +22,10 @@ x = a*H(a)
 D_raw(z) = (5/2)*Omega_m(z)*x^3*integral(a)
 D(z)     = D_raw(z) / D_raw(z=0)
 f(z)     = -1 - Omega_m(z)/2 + (1-Omega_m(z)) + 5*Omega_m(z)/(2*D_raw(z)/a)
-delta_col(z) = 1.686 / D(z)      (delta_col(z=0) = 1.686 hard-coded)
+delta_col(z) = 1.686 * D(z_pk) / D(z)      (delta_col(z_pk) = 1.686)
 ```
+`z_pk` is the redshift at which `P(k)` and `sigma(M)` are evaluated: `CosmoData(params, redshift=[z_pk])` (only the first entry is used; default `[0.0]`). The barrier is normalised to the same epoch, so `delta_col(z)/sigma(M)`, the only combination a tree depends on, does not depend on the choice of `z_pk`. For `z_pk = 0` this is the usual `delta_col(z) = 1.686/D(z)`. Before 2026-09-20 the barrier was always normalised to z=0, which counted `D` twice whenever `z_pk != 0` (halo masses 4-5 dex too low at high redshift for `z_pk = 5`); `redshift=[0.0]` results are unaffected.
+
 Tabulated once at init on a uniform z-grid (`z_max=15`, `nz=5000` default) and looked up by interpolation; `pch_trees.py` guards that trees never grow past this table's `z_max`.
 
 Cosmic time (relative units, `1/H0`):
@@ -79,6 +81,8 @@ The single interface for the spherical-collapse threshold, dispatching to a per-
 ## Merger tree generation ([`pch_trees.py`](../src/foraois/pch_trees.py) -- `PCHMergerTree`)
 
 Implements the Parkinson, Cole & Helly (2008) Appendix A branching-rate/rejection-sampling algorithm exactly, restricted to their `gamma1 >= 0` branch (best-fit constants `G0=0.57`, `gamma1=0.38`, `gamma2=-0.01`, hard-coded).
+
+**Validity at small `M_res / M0`.** PCH08 was calibrated at much coarser resolution than `M_res / M0 ~ 1e-5`. At small `M_res / M0` the main-progenitor histories from this implementation are near-deterministic and assemble earlier than the Zhang-Hui generator (median `M(z=1)/M0` = 0.80 against 0.42 at `M_res/M0 = 1e-4`); the two agree only for `M_res / M0` of order 1e-2. It is not established whether this is an implementation issue or a limit of the algorithm. See [PCH08_HIGH_Z_DIAGNOSTIC.md](PCH08_HIGH_Z_DIAGNOSTIC.md). The paper's single-point PCH08 versus Zhang-Hui comparison is at `M_res / M0 = 1e-2`; its conditional-mass-function and major-merger figures use `M_res / M2 = 1e-4` through the adaptive full-tree grower in `scripts/paper_figs/_treegrowth.py`, a different code path from the one the diagnostic note measured, so whether they are affected is not established.
 
 At each step, for a halo of mass `M2` at `sigma2 = sigma(M2)`, with `M_res` the mass resolution:
 

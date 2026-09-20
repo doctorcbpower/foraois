@@ -102,6 +102,7 @@ See [notebooks/foraois_demo.ipynb](notebooks/foraois_demo.ipynb) for a full inte
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) -- module-by-module package structure.
 - [docs/TESTING.md](docs/TESTING.md) -- what the test suite covers and how to run it.
 - [docs/PAPER_FIGURES.md](docs/PAPER_FIGURES.md) -- which script reproduces which figure in the software-release paper, and the exact command used for each.
+- [docs/PCH08_HIGH_Z_DIAGNOSTIC.md](docs/PCH08_HIGH_Z_DIAGNOSTIC.md) -- open question: PCH08 main-progenitor histories at small `M_res / M0` differ from Zhang-Hui; read before using PCH08 at `M_res / M0` below ~1e-2.
 - [ROADMAP.md](ROADMAP.md) -- known gaps and open research questions.
 
 ## Interactive exploration
