@@ -38,8 +38,16 @@ class CosmoData:
             ``CosmoData.from_params(...)`` for direct construction from
             plain cosmological-parameter keyword arguments.
         redshift : list of float, optional
-            Redshift(s) at which ``get_power_spectrum()`` will later
-            evaluate ``P(k, z)``. Default ``[0.0]``.
+            Redshift at which ``get_power_spectrum()`` evaluates ``P(k, z)``.
+            Only the first entry is used. Default ``[0.0]``.
+
+            The linear collapse barrier is normalised to the same
+            redshift: ``delta_col(z) = 1.686 * D(z_pk) / D(z)``, where
+            ``z_pk = redshift[0]``. The tree depends only on
+            ``delta_col(z) / sigma(M)``, so this is identical to using
+            ``sigma(M)`` at z=0 with ``delta_col(z) = 1.686 / D(z)``. In
+            particular ``delta_col_at_z(z_pk) == 1.686``. For
+            ``redshift=[0.0]`` (the default) the two conventions coincide.
         """
         if redshift is None:
             redshift = [0.0]
@@ -50,8 +58,13 @@ class CosmoData:
 
         use_spherical_bessel_on = params["Code"].get("use_spherical_bessel", False)
 
+        self.pk_redshift = float(redshift[0])
         self.linear_growth_factor_z0 = 1.0
+        # D(z_pk)/D(0); 1.0 here only so the two growth calls below can run
+        # before it is known (delta_col from those calls is not used).
+        self._growth_ref = 1.0
         self.linear_growth_factor_z0, _, _ = self.get_linear_growth_and_collapse(redshift=0.0)
+        self._growth_ref, _, _ = self.get_linear_growth_and_collapse(redshift=self.pk_redshift)
         self.rhocrit0 = 2.775e11  # Critical density at z=0 in Msun/Mpc^3/h^2
 
         default_window_function_type = params["Code"].get("window_function_type", "top_hat")
@@ -271,7 +284,14 @@ class CosmoData:
     def get_linear_growth_and_collapse(self, redshift, **kwargs):
         """
         Compute linear growth factor D(z), growth rate f(z), and the linear
-        collapse threshold delta_col(z).  This performs the full trapezoid
+        collapse threshold delta_col(z).
+
+        ``D(z)`` is normalised to D(0) = 1. ``delta_col(z)`` is normalised
+        to the redshift at which P(k) is evaluated (``self.pk_redshift``):
+        ``delta_col(z) = 1.686 * D(z_pk) / D(z)``, so that it is consistent
+        with sigma(M) computed from that P(k).
+
+        This performs the full trapezoid
         integration and should be called **once** (or a small number of times)
         to build lookup tables.  Use ``delta_col_at_z()`` for cheap per-call
         lookups inside loops.
@@ -301,7 +321,7 @@ class CosmoData:
         f_of_z = -1.0 - OmegaM_of_z / 2.0 + (1.0 - OmegaM_of_z) + 5.0 * OmegaM_of_z / (2.0 * g)
 
         D_of_z /= self.linear_growth_factor_z0
-        delta_col = delta_col_z0 / D_of_z
+        delta_col = delta_col_z0 * self._growth_ref / D_of_z
 
         if np.isscalar(redshift):
             return float(D_of_z[0]), float(f_of_z[0]), float(delta_col[0])
