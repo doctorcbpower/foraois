@@ -96,7 +96,12 @@ def main():
     parser.add_argument("--n-jobs", type=int, default=1, help="worker processes for the (embarrassingly parallel) tree loop")
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--output", default="fig3_major_mergers.png")
+    parser.add_argument("--replot", default=None, help="redraw from a saved .npz (from a previous run) without recomputing")
     args = parser.parse_args()
+    if args.replot:
+        results, bins = load_data(args.replot)
+        plot_figure(results, bins, args.output)
+        return
 
     if args.dz < 0.02 and args.n_grid <= 40:
         print(
@@ -106,55 +111,56 @@ def main():
             file=sys.stderr,
         )
 
-    import matplotlib.pyplot as plt
-
-    fig, axes = plt.subplots(len(M2_VALUES), 1, figsize=(7, 10), sharex=True)
-    # PCH08's own Fig. 3 bins and plots in log10(1+z), not linear z (x-axis
-    # log10(1+z); y-axis dn/dlog10(1+z)) -- matched here so the shape is
-    # comparable to theirs, not a different quantity in a different
-    # variable. Binning the raw log10(1+z) values directly with
-    # density=True gives dn/dlog10(1+z) automatically (density normalizes
-    # by the bin width in whatever variable was actually binned).
+    # PCH08's own Fig. 3 bins and plots in log10(1+z) (y-axis dn/dlog10(1+z)); histogramming the raw log10(1+z)
+    # values with density=True gives that quantity directly.
     bins = np.linspace(0.0, np.log10(1.0 + args.z_max), 21)
-
-    found_counts = []  # (M2, n_pch_found, n_zh_found) per row, rolled up into the suptitle instead of a per-panel title
+    results = []  # per M2: (pch redshifts, zh redshifts)
     for row, M2 in enumerate(M2_VALUES):
         print(f"M2={M2:.2e} ...", flush=True)
         M_res = m_res_for(M2)
-
         target_nupper = None if args.target_nupper < 0 else args.target_nupper
         pch_raw = run_pch08_mainbranch_ensemble(
             args.config, M2, Z0, args.z_max, M_res, args.dz, args.f_major, args.n_trees, n_jobs=args.n_jobs, seed0=args.seed + row * 100_000,
             label=f"PCH08 M2={M2:.2e}", target_nupper=target_nupper,
         )
-        pch_z = [z for z in pch_raw if z is not None]
-
         zh_raw = run_zh_mainbranch_ensemble(
             args.config, M2, Z0, args.z_max, M_res, args.dz, args.f_major, args.n_trees,
             model="cdm", N_grid=args.n_grid, S_max_factor=args.s_max_factor, n_jobs=args.n_jobs, seed0=args.seed + row * 100_000 + 1_000_000,
             label=f"Zhang-Hui M2={M2:.2e}",
         )
-        zh_z = [z for z in zh_raw if z is not None]
-        pch_x = np.log10(1.0 + np.asarray(pch_z))
-        zh_x = np.log10(1.0 + np.asarray(zh_z))
-        found_counts.append((M2, len(pch_z), len(zh_z)))
+        results.append((np.array([z for z in pch_raw if z is not None]), np.array([z for z in zh_raw if z is not None])))
+    from foraois.utils import paper_style as ps
 
-        ax = axes[row]
-        if pch_z:
-            ax.hist(pch_x, bins=bins, histtype="step", density=True, color="#1f77b4", lw=2.4, label="PCH08")
-        if zh_z:
-            ax.hist(zh_x, bins=bins, histtype="step", density=True, color="#9467bd", lw=2.4, label="Zhang-Hui")
-        ax.set_title(f"$M_2={M2:.2e}\\,M_\\odot/h$", fontsize=12)
-        ax.set_ylabel(r"$dn/d\log_{10}(1+z)$", fontsize=14)
-        ax.tick_params(labelsize=11)
-        ax.grid(alpha=0.3)
+    data = {"M2_values": np.array(M2_VALUES), "bins": bins, "n_trees": np.array(args.n_trees), "args": np.array(str(vars(args)))}
+    for row, (pz, zz) in enumerate(results):
+        data[f"pch_z_{row}"], data[f"zh_z_{row}"] = pz, zz
+    np.savez(str(ps.stem_of(args.output)) + ".npz", **data)
+    plot_figure(results, bins, args.output)
 
-    axes[-1].set_xlabel(r"$\log_{10}(1+z)$", fontsize=14)
-    axes[0].legend(fontsize=10)
 
+def plot_figure(results, bins, output):
+    """Single-column (3.4 in) SciencePlots figure: one panel per halo mass."""
+    import matplotlib.pyplot as plt
+    from foraois.utils import paper_style as ps
+
+    ps.apply()
+    fig, axes = plt.subplots(len(M2_VALUES), 1, figsize=(ps.COL, 5.4), sharex=True)
+    for ax, M2, (pz, zz) in zip(axes, M2_VALUES, results):
+        if len(pz):
+            ax.hist(np.log10(1.0 + pz), bins=bins, histtype="step", density=True, color=ps.BLUE, lw=1.3, label="PCH08")
+        if len(zz):
+            ax.hist(np.log10(1.0 + zz), bins=bins, histtype="step", density=True, color=ps.RED, lw=1.3, label="Zhang--Hui")
+        ax.set_title(ps.m2_label(M2))
+        ax.set_ylabel(r"$dn/d\log_{10}(1+z)$")
+    axes[-1].set_xlabel(r"$\log_{10}(1+z)$")
+    axes[0].legend(frameon=False)
     fig.tight_layout()
-    fig.savefig(args.output, dpi=150)
-    print(f"Wrote {args.output}")
+    ps.save(fig, output)
+
+
+def load_data(path):
+    d = np.load(path)
+    return [(d[f"pch_z_{r}"], d[f"zh_z_{r}"]) for r in range(len(M2_VALUES))], d["bins"]
 
 
 if __name__ == "__main__":

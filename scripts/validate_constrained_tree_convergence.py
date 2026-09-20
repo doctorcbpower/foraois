@@ -142,43 +142,31 @@ def run_validation(
 
 
 def build_figure(results, n_show=12, file_name="constrained_vs_unconstrained"):
-    """Plot a subsample of unconstrained, typical-constrained, and extreme-constrained histories."""
+    """Plot a subsample of unconstrained, typical-constrained, and extreme-constrained histories (single column)."""
     import matplotlib.pyplot as plt
 
-    fig, ax = plt.subplots(figsize=(6.5, 4.8))
-    for zs, ms in results["unconstrained_histories"][:n_show]:
-        ax.plot(zs, ms, color="#4C72B0", alpha=0.30, lw=1.6)
-    ax.plot([], [], color="#4C72B0", label="unconstrained")
+    from foraois.utils import paper_style as ps
 
-    colors = {"typical (median)": "#55A868", "extreme (p99)": "#C44E52"}
+    ps.apply()
+    fig, ax = plt.subplots(figsize=(ps.COL, 2.7))
+    for zs, ms in results["unconstrained_histories"][:n_show]:
+        ax.plot(zs, ms, color=ps.BLUE, alpha=0.35, lw=0.8)
+    ax.plot([], [], color=ps.BLUE, label="unconstrained")
+
+    colors = {"typical (median)": ps.GREEN, "extreme (p99)": ps.RED}
     for label, block in results["constrained"].items():
         for zs, ms in block["histories"][:n_show]:
-            ax.plot(zs, ms, color=colors[label], alpha=0.55, lw=1.8)
-        ax.plot(
-            [],
-            [],
-            color=colors[label],
-            label=f"constrained, {label}: $M_1={block['M1']:.2e}$",
-        )
-        ax.scatter(
-            [results["z1"]],
-            [block["M1"]],
-            color=colors[label],
-            zorder=5,
-            marker="*",
-            s=90,
-            edgecolor="k",
-            linewidth=0.8,
-        )
+            ax.plot(zs, ms, color=colors[label], alpha=0.6, lw=0.9)
+        ax.plot([], [], color=colors[label], label=rf"constrained, {label}: $M_1={ps.sci(block['M1'])}$")
+        ax.scatter([results["z1"]], [block["M1"]], color=colors[label], zorder=5, marker="*", s=30, edgecolor="k", linewidth=0.5)
 
     ax.set_yscale("log")
-    ax.set_xlabel("redshift $z$", fontsize=15)
-    ax.set_ylabel(r"main-progenitor mass [$M_\odot/h$]", fontsize=15)
-    ax.tick_params(labelsize=12)
-    ax.legend(fontsize=10)
+    ax.set_xlabel(r"redshift $z$")
+    ax.set_ylabel(r"main-progenitor mass [$M_\odot/h$]")
+    ax.legend(loc="lower left", frameon=False)
     fig.tight_layout()
-    fig.savefig(f"{file_name}.png", dpi=150)
-    return f"{file_name}.png"
+    ps.save(fig, file_name)
+    return f"{file_name}.pdf/.png"
 
 
 def main():
@@ -216,7 +204,13 @@ def main():
         default=12,
         help="number of individual histories per category drawn in the figure",
     )
+    parser.add_argument("--replot", default=None, help="redraw from a saved .pkl (from a previous run) without recomputing")
     args = parser.parse_args()
+    if args.replot:
+        from foraois.utils import paper_style as ps
+
+        build_figure(ps.load_data(args.replot), n_show=args.n_show, file_name=args.output_figure or "constrained_vs_unconstrained")
+        return
 
     results = run_validation(
         config=args.config,
@@ -247,6 +241,9 @@ def main():
         )
 
     if args.output_figure:
+        from foraois.utils import paper_style as ps
+
+        ps.save_data(args.output_figure, results)
         out = build_figure(results, n_show=args.n_show, file_name=args.output_figure)
         print(f"\nWrote {out}")
 

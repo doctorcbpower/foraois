@@ -178,74 +178,60 @@ def write_csv(results, csv_path):
             )
 
 
+def read_csv(path):
+    """Inverse of write_csv: rebuild the results dict (including the standard deviations) for --replot."""
+    import csv
+
+    def col(row, key):
+        return float(row[key]) if row[key] not in ("", None) else None
+
+    rows = list(csv.DictReader(open(path)))
+    results = {"N": [int(float(r["N"])) for r in rows], "_repeats": int(float(rows[0]["repeats"])), "_std": {}}
+    for key in ("serial", "numpy", "numba", "zh_numpy"):
+        results[key] = [col(r, f"{key}_s") for r in rows]
+        results["_std"][key] = [col(r, f"{key}_std_s") for r in rows]
+    return results
+
+
 def build_figure(results, output_path):
+    """Single-column SciencePlots figure of wall time against forest size."""
     import matplotlib.pyplot as plt
 
-    fig, ax = plt.subplots(figsize=(6.5, 5))
+    from foraois.utils import paper_style as ps
+
+    ps.apply()
+    fig, ax = plt.subplots(figsize=(ps.COL, 2.9))
     N_arr = np.array(results["N"])
     std = results.get("_std", {})
     repeats = results.get("_repeats", 1)
 
-    def _std_or_none(key):
-        if repeats > 1 and std.get(key):
-            return np.array(std[key])
+    def _std_or_none(key, mask=None):
+        if repeats > 1 and std.get(key) and all(v is not None for v in np.array(std[key], dtype=object)[mask if mask is not None else slice(None)]):
+            arr = np.array([np.nan if v is None else v for v in std[key]], dtype=float)
+            return arr if mask is None else arr[mask]
         return None
 
-    serial_mask = np.array([v is not None for v in results["serial"]])
-    if serial_mask.any():
-        serial_std = _std_or_none("serial")
-        ax.errorbar(
-            N_arr[serial_mask],
-            np.array(results["serial"])[serial_mask],
-            yerr=serial_std[serial_mask] if serial_std is not None else None,
-            fmt="o-",
-            color="#d62728",
-            capsize=3,
-            lw=2.2,
-            markersize=7,
-            label="PCH08 serial",
-        )
-
-    ax.errorbar(
-        N_arr, results["numpy"], yerr=_std_or_none("numpy"), fmt="s-", color="#1f77b4", capsize=3, lw=2.2, markersize=7, label="PCH08 numpy"
-    )
-    ax.errorbar(
-        N_arr,
-        results["numba"],
-        yerr=_std_or_none("numba"),
-        fmt="^-",
-        color="#2ca02c",
-        capsize=3,
-        lw=2.2,
-        markersize=7,
-        label="PCH08 numba (JIT warm)",
-    )
-    ax.errorbar(
-        N_arr,
-        results["zh_numpy"],
-        yerr=_std_or_none("zh_numpy"),
-        fmt="d-",
-        color="#9467bd",
-        capsize=3,
-        lw=2.2,
-        markersize=7,
-        label="Zhang-Hui numpy (closed-form)",
-    )
+    series = [("serial", "o-", ps.RED, "PCH08 serial"), ("numpy", "s-", ps.BLUE, "PCH08 numpy"),
+              ("numba", "^-", ps.GREEN, "PCH08 numba (JIT warm)"), ("zh_numpy", "d-", ps.PURPLE, "Zhang--Hui numpy (closed-form)")]
+    for key, fmt, color, label in series:
+        vals = np.array([np.nan if v is None else v for v in results[key]], dtype=float)
+        mask = np.isfinite(vals)
+        if not mask.any():
+            continue
+        ax.errorbar(N_arr[mask], vals[mask], yerr=_std_or_none(key, mask), fmt=fmt, color=color, capsize=1.5, lw=1.0, markersize=3, elinewidth=0.7, label=label)
 
     ax.set_xscale("log")
     ax.set_yscale("log")
-    ax.set_xlabel(r"$N$ trees", fontsize=15)
-    ax.set_ylabel("wall time [s]", fontsize=15)
-    ax.tick_params(labelsize=12)
-    ax.legend(fontsize=10)
-    ax.grid(alpha=0.3, which="both")
+    ax.set_xlabel(r"$N_{\rm trees}$")
+    ax.set_ylabel("wall time [s]")
+    ax.legend(loc="lower center", bbox_to_anchor=(0.5, 1.0), ncol=2, frameon=False, fontsize=6.5, columnspacing=1.0, handlelength=1.6)
     fig.tight_layout()
-    fig.savefig(output_path, dpi=150)
+    ps.save(fig, output_path)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output", default="benchmark_backends.png")
+    parser.add_argument("--output", default="benchmark_backends")
     parser.add_argument("--csv", default="benchmark_backends.csv")
     parser.add_argument(
         "--repeats",
@@ -255,7 +241,11 @@ def main():
         "and standard deviation, rather than a single-run value -- use this to settle close calls "
         "(e.g. Zhang-Hui numpy vs. PCH08 numba) that can flip sign between individual runs.",
     )
+    parser.add_argument("--replot", default=None, help="redraw from a saved benchmark CSV without re-timing")
     args = parser.parse_args()
+    if args.replot:
+        build_figure(read_csv(args.replot), args.output)
+        return
 
     results = run_benchmark(repeats=args.repeats)
 

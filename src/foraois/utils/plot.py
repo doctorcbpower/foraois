@@ -108,14 +108,59 @@ _RC = {
 }
 
 
+_PAPER = {"on": False, "width": None}
+
+
+def use_paper_style(width="col"):
+    """Draw the paper figures (dendrogram, DM-model comparison, branching-rate validation) in the SciencePlots
+    paper style at printed size: width 'col' (single column) or 'full' (text width). Off by default."""
+    from foraois.utils import paper_style
+
+    _PAPER["on"] = True
+    _PAPER["width"] = paper_style.COL if width == "col" else paper_style.FULL
+    paper_style.apply()
+
+
 def _style_on():
-    mpl.rcParams.update(_RC)
+    if _PAPER["on"]:
+        from foraois.utils import paper_style
+
+        paper_style.apply()
+    else:
+        mpl.rcParams.update(_RC)
+
+
+def _figsize(w, h):
+    """Screen size (w, h), or the printed width with the same aspect ratio in paper mode."""
+    return (_PAPER["width"], _PAPER["width"] * h / w) if _PAPER["on"] else (w, h)
+
+
+def _fs(size):
+    """A font size for screen use, or None (= the style's printed size) in paper mode."""
+    return None if _PAPER["on"] else size
+
+
+def _lw(width):
+    return 0.55 * width if _PAPER["on"] else width
+
+
+def _colors():
+    """(blue, orange, green, purple, red, yellow) for the current mode."""
+    if _PAPER["on"]:
+        from foraois.utils import paper_style as ps
+
+        return ps.BLUE, ps.RED, ps.GREEN, ps.PURPLE, ps.CYAN, ps.YELLOW
+    return _BLUE, _ORANGE, _GREEN, _PURPLE, _RED, _YELLOW
 
 
 def _save_or_show(fig, file_name):
     fig.tight_layout()
     if file_name is None:
         plt.show()
+    elif _PAPER["on"]:
+        from foraois.utils import paper_style
+
+        paper_style.save(fig, file_name)
     else:
         fig.savefig(
             f"{file_name}.png",
@@ -128,11 +173,12 @@ def _save_or_show(fig, file_name):
 
 
 def _decorate(ax, xlabel, ylabel, title=None):
-    ax.set_xlabel(xlabel, labelpad=5, fontsize=15)
-    ax.set_ylabel(ylabel, labelpad=5, fontsize=15)
+    ax.set_xlabel(xlabel, labelpad=5, fontsize=_fs(15))
+    ax.set_ylabel(ylabel, labelpad=5, fontsize=_fs(15))
     if title:
         ax.set_title(title, pad=7)
-    ax.tick_params(labelsize=12)
+    if not _PAPER["on"]:
+        ax.tick_params(labelsize=12)
 
 
 # ---------------------------------------------------------------------------
@@ -748,7 +794,7 @@ def plot_dendrogram(
     file_name : str or None
     """
     if highlight_color is None:
-        highlight_color = _BLUE
+        highlight_color = _colors()[0]
 
     if M_min_display is not None:
         nodes = [n for n in nodes if n["mass"] >= M_min_display]
@@ -799,14 +845,15 @@ def plot_dendrogram(
 
     # ---- draw ----
     _style_on()
-    fig, ax = plt.subplots(figsize=(9, 7))
+    fig, ax = plt.subplots(figsize=_figsize(9, 8))
+    _k = fig.get_figwidth() / 9.0  # marker/line scale relative to the screen size
 
     mass_vals = np.array([n["mass"] for n in nodes])
     logm_min, logm_max = np.log10(mass_vals.min()), np.log10(mass_vals.max())
     span = max(logm_max - logm_min, 1e-6)
 
     def _size(mass, small=6.0, large=140.0):
-        return small + (large - small) * (np.log10(mass) - logm_min) / span
+        return _k**2 * (small + (large - small) * (np.log10(mass) - logm_min) / span)
 
     # edges first (so nodes draw on top)
     edge_segs = []
@@ -815,7 +862,7 @@ def plot_dendrogram(
             continue
         d = by_id[n["descendant_id"]]
         edge_segs.append([(x_pos[d["id"]], y_of[d["id"]]), (x_pos[n["id"]], y_of[n["id"]])])
-    ax.add_collection(LineCollection(edge_segs, colors=_DIM, linewidths=1.0, zorder=1))
+    ax.add_collection(LineCollection(edge_segs, colors=_DIM, linewidths=_lw(1.0), zorder=1))
 
     # main branch: follow is_main links from the root
     main_ids = set()
@@ -838,7 +885,7 @@ def plot_dendrogram(
         s=sizes[~is_main_arr],
         facecolors="white",
         edgecolors=_EDGE,
-        linewidths=1.0,
+        linewidths=_lw(1.0),
         zorder=2,
     )
     ax.scatter(
@@ -847,7 +894,7 @@ def plot_dendrogram(
         s=sizes[is_main_arr],
         facecolors=highlight_color,
         edgecolors=_EDGE,
-        linewidths=1.0,
+        linewidths=_lw(1.0),
         zorder=3,
     )
 
@@ -856,10 +903,10 @@ def plot_dendrogram(
             [x_pos[mark_node_id]],
             [y_of[mark_node_id]],
             marker="*",
-            s=400,
+            s=400 * _k**2,
             facecolors=_YELLOW,
             edgecolors=_EDGE,
-            linewidths=1.2,
+            linewidths=_lw(1.2),
             zorder=4,
         )
 
@@ -876,7 +923,9 @@ def plot_dendrogram(
 
     for spine in ("top", "right", "bottom"):
         ax.spines[spine].set_visible(False)
-    ax.tick_params(axis="y", labelsize=12)
+    ax.tick_params(axis="y", labelsize=_fs(12), right=False)
+    ax.tick_params(axis="x", top=False, bottom=False)
+    ax.minorticks_off()
 
     _save_or_show(fig, file_name)
 
@@ -993,8 +1042,8 @@ def plot_dm_model_comparison(models, reference, file_name=None):
         raise KeyError(f"reference '{reference}' not in models {list(models)}")
 
     _style_on()
-    fig, axes = plt.subplots(1, 2, figsize=(11, 4.5))
-    palette = [_BLUE, _ORANGE, _GREEN, _PURPLE, _RED, _YELLOW]
+    fig, axes = plt.subplots(1, 2, figsize=_figsize(11, 4.5))
+    palette = list(_colors())
 
     logm = np.linspace(6.0, 15.0, 200)
     ref_cosmo, _ = models[reference]
@@ -1003,26 +1052,26 @@ def plot_dm_model_comparison(models, reference, file_name=None):
     ax = axes[0]
     for i, (label, (_cosmo_data, pk_data)) in enumerate(models.items()):
         c = palette[i % len(palette)]
-        ax.loglog(pk_data["k"], pk_data["Pk"][0], color=c, lw=2.3, label=label)
+        ax.loglog(pk_data["k"], pk_data["Pk"][0], color=c, lw=_lw(2.3), label=label)
     _decorate(
         ax,
         r"$k\;\;[h\,\mathrm{Mpc}^{-1}]$",
         r"$P(k)\;\;[\mathrm{Mpc}^3\,h^{-3}]$",
     )
-    ax.legend(fontsize=10)
+    ax.legend(fontsize=_fs(10))
 
     ax2 = axes[1]
     for i, (label, (cosmo_data, _pk_data)) in enumerate(models.items()):
         c = palette[i % len(palette)]
         sigma = cosmo_data.sigma_at_logmass(logm)
-        ax2.plot(logm, sigma / ref_sigma, color=c, lw=2.3, label=label)
-    ax2.axhline(1.0, color=_DIM, lw=1.2, ls="--")
+        ax2.plot(logm, sigma / ref_sigma, color=c, lw=_lw(2.3), label=label)
+    ax2.axhline(1.0, color=_DIM, lw=_lw(1.2), ls="--")
     _decorate(
         ax2,
         r"$\log_{10}(M\,/\,[M_\odot\,h^{-1}])$",
         rf"$\sigma(M)\,/\,\sigma_{{\rm {reference}}}(M)$",
     )
-    ax2.legend(fontsize=10)
+    ax2.legend(fontsize=_fs(10))
 
     _save_or_show(fig, file_name)
 
@@ -1110,7 +1159,7 @@ def plot_branching_rate_validation(
         return S_q * R_q
 
     _style_on()
-    fig, ax = plt.subplots(figsize=(7, 5))
+    fig, ax = plt.subplots(figsize=_figsize(7, 5))
 
     # log-spaced bins: S(q) ~ q^(eta-1) is a power law over several decades
     # of q near qres, so linear bins waste most of their resolution on the
@@ -1128,17 +1177,17 @@ def plot_branching_rate_validation(
         edges[:-1],
         empirical_density,
         where="post",
-        color=_BLUE,
-        lw=2.3,
-        label=f"Monte Carlo ($N={n_trials:,}$)",
+        color=_colors()[0],
+        lw=_lw(2.3),
+        label=f"Monte Carlo, $N=$ {n_trials:,}",
     )
 
     q_fine = np.geomspace(qres, 0.5, 400)
     ax.plot(
         q_fine,
         rate_density(q_fine),
-        color=_ORANGE,
-        lw=2.6,
+        color=_colors()[1],
+        lw=_lw(2.6),
         ls="--",
         label="analytic $S(q)R(q)$ (quadrature)",
     )
@@ -1150,7 +1199,7 @@ def plot_branching_rate_validation(
         r"$q = M_1/M_2$",
         r"$\mathrm{d}N_{\rm accepted}/\mathrm{d}q$ per trial",
     )
-    ax.legend(fontsize=10)
+    ax.legend(fontsize=_fs(10), loc="lower left")
     ax.text(
         0.97,
         0.95,
@@ -1160,7 +1209,7 @@ def plot_branching_rate_validation(
         transform=ax.transAxes,
         ha="right",
         va="top",
-        fontsize=10,
+        fontsize=_fs(10),
         color=_DIM,
     )
 

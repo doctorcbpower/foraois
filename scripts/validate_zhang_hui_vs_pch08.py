@@ -132,57 +132,36 @@ def run_comparison(
 
 
 def build_figure(pch_alive, zh_alive, stats, file_name="pch08_vs_zhanghui"):
-    """Plot the two surviving-mass distributions as overlaid step histograms."""
+    """Plot the two surviving-mass distributions as overlaid step histograms (single-column, SciencePlots)."""
     import matplotlib.pyplot as plt
+    from matplotlib.ticker import FuncFormatter, NullFormatter
 
-    # Wide enough, with a short title, that the mean-mass-difference number
-    # in the title doesn't get clipped at the figure's right edge -- this
-    # clipped previously at figsize=(6, 4.5) with the fuller title text.
-    fig, ax = plt.subplots(figsize=(7.5, 5))
+    from foraois.utils import paper_style as ps
+
+    ps.apply()
+    fig, ax = plt.subplots(figsize=(ps.COL, 2.7))
     bins = np.logspace(
         np.log10(min(pch_alive.min(), zh_alive.min())),
         np.log10(max(pch_alive.max(), zh_alive.max())),
         40,
     )
-    ax.hist(
-        pch_alive,
-        bins=bins,
-        histtype="step",
-        lw=2.4,
-        color="#4C72B0",
-        label="PCH08 (fitted rate)",
-    )
-    ax.hist(
-        zh_alive,
-        bins=bins,
-        histtype="step",
-        lw=2.4,
-        color="#C44E52",
-        label="Zhang-Hui (exact rate)",
-    )
-    ax.axvline(pch_alive.mean(), color="#4C72B0", ls="--", lw=1.6)
-    ax.axvline(zh_alive.mean(), color="#C44E52", ls="--", lw=1.6)
+    ax.hist(pch_alive, bins=bins, histtype="step", lw=1.3, color=ps.BLUE, label="PCH08 (fitted rate)")
+    ax.hist(zh_alive, bins=bins, histtype="step", lw=1.3, color=ps.RED, label="Zhang--Hui (exact rate)")
+    ax.axvline(pch_alive.mean(), color=ps.BLUE, ls="--", lw=0.9)
+    ax.axvline(zh_alive.mean(), color=ps.RED, ls="--", lw=0.9)
     ax.set_xscale("log")
-    ax.set_xlabel(
-        rf"surviving main-progenitor mass at $z_{{\rm max}}={stats['z_max']:g}$ "
-        r"[$M_\odot/h$]",
-        fontsize=15,
-    )
-    ax.set_ylabel("N trees", fontsize=15)
-    ax.tick_params(labelsize=12)
-    ax.text(
-        0.03,
-        0.95,
-        f"$n={stats['n_trees']:,}$\nmean-mass difference $= {stats['mean_mass_discrepancy_pct']:+.1f}\\%$",
-        transform=ax.transAxes,
-        ha="left",
-        va="top",
-        fontsize=11,
-    )
-    ax.legend(fontsize=10)
+    ticks = [t for t in (5e10, 1e11, 3e11) if bins[0] <= t <= bins[-1] * 1.05]
+    ax.set_xticks(ticks)
+    ax.xaxis.set_minor_formatter(NullFormatter())
+    ax.xaxis.set_major_formatter(FuncFormatter(lambda x, _: rf"${ps.sci(x, 0)}$".replace("1\\times", "")))
+    ax.set_xlabel(rf"surviving main-progenitor mass at $z_{{\rm max}}={stats['z_max']:g}$ [$M_\odot/h$]")
+    ax.set_ylabel(r"$N_{\rm trees}$")
+    ax.text(0.03, 0.95, f"$n=$ {stats['n_trees']:,}\nmean-mass difference $= {stats['mean_mass_discrepancy_pct']:+.1f}\\%$",
+            transform=ax.transAxes, ha="left", va="top")
+    ax.legend(loc="center left", frameon=False)
     fig.tight_layout()
-    fig.savefig(f"{file_name}.png", dpi=150)
-    return f"{file_name}.png"
+    ps.save(fig, file_name)
+    return f"{file_name}.pdf/.png"
 
 
 def main():
@@ -201,7 +180,13 @@ def main():
         help="base name (no extension) for the surviving-mass histogram figure; "
         "if omitted, only the printed statistics are produced",
     )
+    parser.add_argument("--replot", default=None, help="redraw from a saved .pkl (from a previous run) without recomputing")
     args = parser.parse_args()
+    if args.replot:
+        from foraois.utils import paper_style as ps
+
+        build_figure(*ps.load_data(args.replot), file_name=args.output_figure or "pch08_vs_zhanghui")
+        return
 
     pch_alive, zh_alive, stats = run_comparison(
         config=args.config,
@@ -230,6 +215,9 @@ def main():
     print(f"  mean surviving mass: {stats['mean_mass_discrepancy_pct']:+.2f}%")
 
     if args.output_figure:
+        from foraois.utils import paper_style as ps
+
+        ps.save_data(args.output_figure, (pch_alive, zh_alive, stats))
         out = build_figure(pch_alive, zh_alive, stats, file_name=args.output_figure)
         print(f"\nWrote {out}")
 

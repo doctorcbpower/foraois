@@ -8,17 +8,27 @@ module docstring has the full parameter reference and the reasoning
 behind its defaults (convergence checks, timestep-compliance caveats,
 runtime estimates).
 
+All figures are drawn at their printed size in the SciencePlots `science` + `bright` style through
+`foraois.utils.paper_style` (`pip install SciencePlots`, or `pip install -e .[paper]`; LaTeX is needed for the
+`science` style's text rendering, and without SciencePlots a plain serif style is used). Each script writes a vector
+PDF and a 300 dpi PNG. The scripts that compute something (`validate_*.py`, `paper_figs/*.py`,
+`make_accretion_decomposition_figure.py`) also save the data they plotted (`.npz` or `.pkl` next to the figure), and
+`--replot <file>` redraws from it without rerunning; `benchmark_backends.py --replot <csv>` does the same from its CSV.
+`--output` is a base name (an extension, if given, is ignored). Figure widths: single column for the dendrogram,
+branching-rate, accretion-decomposition, surviving-mass, constrained-tree, major-merger and benchmark figures; full
+width for the DM-model comparison and the conditional mass function.
+
 | Paper figure | Script | Command used for the paper |
 |---|---|---|
-| Merger tree dendrogram | [`scripts/make_tree_dendrogram_figure.py`](../scripts/make_tree_dendrogram_figure.py) | `python scripts/make_tree_dendrogram_figure.py --output tree_dendrogram` |
+| Merger tree dendrogram | [`scripts/make_tree_dendrogram_figure.py`](../scripts/make_tree_dendrogram_figure.py) | `python scripts/make_tree_dendrogram_figure.py --output tree_dendrogram` (fixed `--seed 42`) |
 | CDM/WDM/FDM power spectrum & mass variance comparison | [`scripts/make_dm_model_comparison_figure.py`](../scripts/make_dm_model_comparison_figure.py) | `python scripts/make_dm_model_comparison_figure.py --output dm_model_comparison` |
 | Smooth accretion vs. discrete mergers | [`scripts/make_accretion_decomposition_figure.py`](../scripts/make_accretion_decomposition_figure.py) | `python scripts/make_accretion_decomposition_figure.py --output smooth_vs_merger` |
 | PCH08 branching-rate sampling validation | [`scripts/make_validation_figure.py`](../scripts/make_validation_figure.py) | `python scripts/make_validation_figure.py --output branching_rate_validation` |
 | PCH08 vs. Zhang-Hui surviving-mass comparison | [`scripts/validate_zhang_hui_vs_pch08.py`](../scripts/validate_zhang_hui_vs_pch08.py) | `python scripts/validate_zhang_hui_vs_pch08.py --output-figure pch08_vs_zhanghui` (defaults: `dz=0.005`, `n_trees=20000`) |
-| PCH08 vs. Zhang-Hui conditional mass function | [`scripts/paper_figs/fig1_conditional_mass_function.py`](../scripts/paper_figs/fig1_conditional_mass_function.py) | `python scripts/paper_figs/fig1_conditional_mass_function.py --target-nupper 0.1 --output pch08_vs_zhanghui_cmf.png` (script default `--target-nupper` is `0.5`, a cheaper but PCH08-non-compliant compromise -- the paper uses PCH08's own `0.1` design target) |
-| PCH08 vs. Zhang-Hui major-merger redshift | [`scripts/paper_figs/fig3_major_merger_redshift.py`](../scripts/paper_figs/fig3_major_merger_redshift.py) | `python scripts/paper_figs/fig3_major_merger_redshift.py --output pch08_vs_zhanghui_major_merger.png` (`--target-nupper 0.1` is already this script's default) |
+| PCH08 vs. Zhang-Hui conditional mass function | [`scripts/paper_figs/fig1_conditional_mass_function.py`](../scripts/paper_figs/fig1_conditional_mass_function.py) | `python scripts/paper_figs/fig1_conditional_mass_function.py --target-nupper 0.1 --output pch08_vs_zhanghui_cmf` (script default `--target-nupper` is `0.5`, a cheaper but PCH08-non-compliant compromise -- the paper uses PCH08's own `0.1` design target) |
+| PCH08 vs. Zhang-Hui major-merger redshift | [`scripts/paper_figs/fig3_major_merger_redshift.py`](../scripts/paper_figs/fig3_major_merger_redshift.py) | `python scripts/paper_figs/fig3_major_merger_redshift.py --output pch08_vs_zhanghui_major_merger` (`--target-nupper 0.1` is already this script's default) |
 | Constrained vs. unconstrained growth histories | [`scripts/validate_constrained_tree_convergence.py`](../scripts/validate_constrained_tree_convergence.py) | `python scripts/validate_constrained_tree_convergence.py --n-trees 3000 --output-figure constrained_vs_unconstrained` (script default `--n-trees` is `150`; the paper uses the sample-size-convergence-checked `3000`, see the script's own docstring for why) |
-| Backend wall-time scaling | [`scripts/benchmark_backends.py`](../scripts/benchmark_backends.py) | `python scripts/benchmark_backends.py --repeats 5 --output backend_benchmark.png --csv backend_benchmark.csv` |
+| Backend wall-time scaling | [`scripts/benchmark_backends.py`](../scripts/benchmark_backends.py) | `python scripts/benchmark_backends.py --repeats 5 --output backend_benchmark --csv backend_benchmark.csv` |
 
 Two scripts under `scripts/paper_figs/` are *not* used by the current
 paper -- `fig2_progenitor_mass_functions.py` and
