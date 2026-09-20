@@ -580,3 +580,64 @@ def test_user_mode_matches_camb_round_trip(tmp_path):
     sigma8_camb = np.sqrt(cosmo_camb.get_mass_variance(pk_camb, radius=8.0))
     sigma8_user = np.sqrt(cosmo_user.get_mass_variance(pk_user, radius=8.0))
     assert sigma8_user == pytest.approx(sigma8_camb, rel=1e-4)
+
+
+# ---------------------------------------------------------------------------
+# The collapse barrier must be normalised to the redshift at which P(k) is
+# evaluated (CosmoData(redshift=[z_pk])). The tree depends only on
+# delta_col(z)/sigma(M), so z_pk is a bookkeeping choice and must not change
+# the physics. sigma(M) at z_pk is D(z_pk)*sigma(M) at z=0, so the barrier
+# must be 1.686*D(z_pk)/D(z), not 1.686/D(z).
+# ---------------------------------------------------------------------------
+
+
+def test_delta_col_is_normalised_to_pk_redshift():
+    from foraois.cosmo_utils import CosmoData
+    from tests.conftest import PLANCK_LIKE
+
+    c0 = CosmoData(PLANCK_LIKE, redshift=[0.0])
+    c5 = CosmoData(PLANCK_LIKE, redshift=[5.0])
+    assert c5.pk_redshift == 5.0
+    # barrier is exactly the collapse threshold at the anchor redshift
+    assert c5.delta_col_at_z(5.0) == pytest.approx(1.686, rel=1e-3)
+    # and differs from the z=0-normalised barrier by the constant D(z_pk)
+    D5, _, _ = c0.get_linear_growth_and_collapse(redshift=5.0)
+    z = np.array([5.0, 8.0, 12.0, 20.0])
+    assert c5.delta_col_at_z(z) == pytest.approx(c0.delta_col_at_z(z) * D5, rel=1e-3)
+    # default (z_pk = 0) behaviour is unchanged
+    assert c0.delta_col_at_z(0.0) == pytest.approx(1.686, rel=1e-3)
+
+
+def test_nu_is_independent_of_pk_redshift():
+    # nu(M,z) = delta_col(z)/sigma(M) must not depend on which redshift
+    # P(k) is evaluated at. With the barrier left z=0-normalised this fails
+    # by a factor 1/D(z_pk) (4.7 at z_pk=5).
+    pytest.importorskip("camb")
+    from pathlib import Path
+
+    from foraois.cosmo_utils import CosmoData
+    from foraois.utils import io
+
+    config_path = Path(__file__).resolve().parents[1] / "config" / "menon_power_2024.yml"
+    run_params = io.get_params(str(config_path))
+
+    def nu_table(z_pk, masses, zs):
+        cd = CosmoData(run_params, redshift=[z_pk])
+        pk = cd.get_power_spectrum()
+        cd._prepare_sigma_grid(pk)
+        sig = 10 ** np.interp(np.log10(masses), cd._logmass, np.log10(cd._sigma))
+        return np.array([cd.delta_col_at_z(z) / sig for z in zs]), cd, pk
+
+    masses = np.array([1e8, 1e10, 1e12])
+    zs = [5.0, 10.0, 20.0]
+    nu0, c0, pk0 = nu_table(0.0, masses, zs)
+    nu5, c5, pk5 = nu_table(5.0, masses, zs)
+    # CAMB's and the code's growth factors differ slightly (radiation, neutrino-free
+    # here), so allow 2%
+    assert nu5 == pytest.approx(nu0, rel=0.02)
+
+    # sigma8 at z_pk is D(z_pk)*sigma8(0)
+    s8_0 = np.sqrt(c0.get_mass_variance(pk0, radius=8.0))
+    s8_5 = np.sqrt(c5.get_mass_variance(pk5, radius=8.0))
+    D5, _, _ = c0.get_linear_growth_and_collapse(redshift=5.0)
+    assert s8_5 / s8_0 == pytest.approx(D5, rel=0.02)
