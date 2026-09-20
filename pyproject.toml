@@ -50,6 +50,7 @@ keywords = [
 class = ["classy"]
 camb = ["camb"]
 numba = ["numba"]
+paper = ["SciencePlots"]
 dev = [
     "pytest>=7",
     "pytest-cov",

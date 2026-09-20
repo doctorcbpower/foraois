@@ -204,6 +204,57 @@ def run_column(config_path, M2, checkpoints, dz, n_trees_pch, n_trees_zh, model,
     return pch_by_z1, zh_by_z1
 
 
+def save_data(panels, log_ratio_grid, args):
+    """Save every panel's curves next to the figure so it can be restyled with --replot without rerunning."""
+    from foraois.utils import paper_style as ps
+
+    out = {"M2_values": np.array(M2_VALUES), "z1_values": np.array(Z1_VALUES), "log_ratio_grid": log_ratio_grid,
+           "args": np.array(str(vars(args)))}
+    for (row, col), (centers, f_pch, f_zh, f_eps) in panels.items():
+        out[f"centers_{row}_{col}"], out[f"pch_{row}_{col}"], out[f"zh_{row}_{col}"] = centers, f_pch, f_zh
+        if f_eps is not None:
+            out[f"eps_{row}_{col}"] = f_eps
+    np.savez(str(ps.stem_of(args.output)) + ".npz", **out)
+
+
+def load_data(path):
+    d = np.load(path)
+    panels = {}
+    for row in range(len(Z1_VALUES)):
+        for col in range(len(M2_VALUES)):
+            eps = d[f"eps_{row}_{col}"] if f"eps_{row}_{col}" in d.files else None
+            panels[(row, col)] = (d[f"centers_{row}_{col}"], d[f"pch_{row}_{col}"], d[f"zh_{row}_{col}"], eps)
+    return panels, d["log_ratio_grid"]
+
+
+def plot_figure(panels, log_ratio_grid, output):
+    """Full-width (7.1 in) SciencePlots figure: 4 redshift rows x 3 halo-mass columns."""
+    import matplotlib.pyplot as plt
+    from foraois.utils import paper_style as ps
+
+    ps.apply()
+    fig, axes = plt.subplots(len(Z1_VALUES), len(M2_VALUES), figsize=(ps.FULL, 5.6), sharex="col")
+    for (row, col), (centers, f_pch, f_zh, f_eps) in panels.items():
+        ax = axes[row, col]
+        if f_eps is not None:
+            ax.plot(log_ratio_grid, f_eps, "-", color="0.6", lw=1.0, label="unmodified EPS (analytic)")
+        ax.step(centers, f_pch, where="mid", color=ps.BLUE, lw=1.3, label="PCH08")
+        ax.step(centers, f_zh, where="mid", color=ps.RED, lw=1.3, label="Zhang--Hui")
+        finite = np.concatenate([f_pch[np.isfinite(f_pch)], f_zh[np.isfinite(f_zh)]])
+        ax.set_ylim(min(-2.0, np.min(finite) - 0.2) if finite.size else -2.0, 0.5)
+        ax.set_xlim(-4.5, 0.05)
+        if row == 0:
+            ax.set_title(ps.m2_label(M2_VALUES[col]))
+        if col == 0:
+            ax.set_ylabel(r"$\log_{10} f_{\rm cmf}$")
+        ax.text(0.04, 0.94, rf"$z_1={Z1_VALUES[row]:g}$", transform=ax.transAxes, ha="left", va="top")
+        if row == len(Z1_VALUES) - 1:
+            ax.set_xlabel(r"$\log_{10}(M_1/M_2)$")
+    axes[0, -1].legend(loc="upper right", frameon=False)
+    fig.tight_layout()
+    ps.save(fig, output)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--config", default="config/planck2018_camb.yml")
@@ -244,7 +295,12 @@ def main():
         ),
     )
     parser.add_argument("--output", default="fig1_cmf.png")
+    parser.add_argument("--replot", default=None, help="redraw from a saved .npz (from a previous run) without recomputing")
     args = parser.parse_args()
+    if args.replot:
+        panels, grid = load_data(args.replot)
+        plot_figure(panels, grid, args.output)
+        return
     n_trees_zh = args.n_trees_zh if args.n_trees_zh is not None else args.n_trees
 
     if args.dz < 0.02 and args.n_grid <= 40:
@@ -261,13 +317,9 @@ def main():
 
     PCHMergerTree(cosmo_data, run_params)  # side effect: builds cosmo_data's sigma(M) interpolation table
 
-    import matplotlib.pyplot as plt
-
-    fig, axes = plt.subplots(len(Z1_VALUES), len(M2_VALUES), figsize=(11, 12), sharex="col")
-
     log_ratio_grid = np.linspace(-4.5, 0.0, 200)
-
     target_nupper = None if args.target_nupper < 0 else args.target_nupper
+    panels = {}
     for col, M2 in enumerate(M2_VALUES):
         print(f"M2={M2:.2e} ...", flush=True)
         pch_by_z1, zh_by_z1 = run_column(
@@ -275,41 +327,12 @@ def main():
             target_nupper=target_nupper,
         )
         for row, z1 in enumerate(Z1_VALUES):
-            ax = axes[row, col]
-
             centers, log_f_pch, _ = cmf_histogram(pch_by_z1[z1], M2)
             _, log_f_zh, _ = cmf_histogram(zh_by_z1[z1], M2)
-
-            if args.show_eps_reference:
-                log_f_eps = eps_analytic_cmf(M2, Z0, z1, cosmo_data, log_ratio_grid)
-                ax.plot(log_ratio_grid, log_f_eps, "-", color="0.6", lw=1.8, label="unmodified EPS (analytic, NOT a fair comparison -- see docstring)")
-
-            ax.step(centers, log_f_pch, where="mid", color="#1f77b4", lw=2.0, label="PCH08 (Monte Carlo)")
-            ax.step(centers, log_f_zh, where="mid", color="#9467bd", lw=2.0, label="Zhang-Hui (Monte Carlo)")
-
-            # Auto-extend the y floor to whatever the data actually spans (capped
-            # at a sane minimum) -- a fixed floor clips most of the curve at high
-            # z1 / large M2, where the resolution-driven suppression pushes most
-            # bins well below -2 (see 'On the EPS reference curve' in the module
-            # docstring for why this suppression is real, not a bug).
-            finite_vals = np.concatenate([log_f_pch[np.isfinite(log_f_pch)], log_f_zh[np.isfinite(log_f_zh)]])
-            y_floor = min(-2.0, np.min(finite_vals) - 0.2) if finite_vals.size else -2.0
-            ax.set_ylim(y_floor, 0.5)
-            ax.set_xlim(-4.5, 0.05)
-            if row == 0:
-                ax.set_title(f"$M_2={M2:.2e}\\,M_\\odot/h$", fontsize=12)
-            if col == 0:
-                ax.set_ylabel(f"$z_1={z1}$\n" + r"$\log_{10} f_{\rm cmf}$", fontsize=12)
-            if row == len(Z1_VALUES) - 1:
-                ax.set_xlabel(r"$\log_{10}(M_1/M_2)$", fontsize=13)
-            ax.tick_params(labelsize=10)
-            ax.grid(alpha=0.3)
-
-    axes[0, -1].legend(fontsize=9, loc="upper right")
-#    fig.suptitle("PCH08 Fig. 1 analogue: conditional mass function (no N-body reference available)", fontsize=12)
-    fig.tight_layout(rect=[0, 0, 1, 0.97])
-    fig.savefig(args.output, dpi=150)
-    print(f"Wrote {args.output}")
+            log_f_eps = eps_analytic_cmf(M2, Z0, z1, cosmo_data, log_ratio_grid) if args.show_eps_reference else None
+            panels[(row, col)] = (centers, log_f_pch, log_f_zh, log_f_eps)
+    save_data(panels, log_ratio_grid, args)
+    plot_figure(panels, log_ratio_grid, args.output)
 
 
 if __name__ == "__main__":

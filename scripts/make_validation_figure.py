@@ -21,7 +21,7 @@ from foraois.utils import plot
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    # base name, no extension -- utils/plot.py's _save_or_show appends .png
+    # base name, no extension -- utils/plot.py's _save_or_show appends .pdf/.png
     parser.add_argument("--output", default="validation_branching_rate")
     parser.add_argument("--config", default="config/planck2018_camb.yml")
     # A moderately deep step (large d_omega) at a mass ratio well above
@@ -37,6 +37,7 @@ def main():
     parser.add_argument("--n-trials", type=int, default=500_000)
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
+    plot.use_paper_style("col")  # SciencePlots, printed size
 
     run_params = foraois_io.get_params(args.config)
     cosmo_data = CosmoData(run_params, redshift=[args.z0])

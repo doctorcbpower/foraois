@@ -38,11 +38,12 @@ def build_figure(configs=DEFAULT_CONFIGS, reference="CDM", z0=0.0, file_name="dm
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    # base name, no extension -- utils/plot.py's _save_or_show appends .png
+    # base name, no extension -- utils/plot.py's _save_or_show appends .pdf/.png
     parser.add_argument("--output", default="dm_model_comparison")
     parser.add_argument("--reference", default="CDM")
     parser.add_argument("--z0", type=float, default=0.0)
     args = parser.parse_args()
+    plot.use_paper_style("full")  # SciencePlots, printed size
 
     result = build_figure(reference=args.reference, z0=args.z0, file_name=args.output)
     print(result)

@@ -46,7 +46,12 @@ def main():
     parser.add_argument("--z0", type=float, default=0.0)
     parser.add_argument("--z-max", type=float, default=4.0)
     parser.add_argument("--dz", type=float, default=0.2)
+    parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
+    import numpy as np
+
+    np.random.seed(args.seed)  # the tree builder draws from the global state
+    plot.use_paper_style("col")  # SciencePlots, printed size
 
     nodes, result = build_figure(
         config=args.config,

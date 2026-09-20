@@ -76,23 +76,30 @@ def build_figure(
             "this points to a real bug, not a plotting issue; do not paper over it here."
         )
 
-    fig, ax = plt.subplots(figsize=(6, 4.5))
-    ax.stackplot(
-        z_steps_post,
-        cum_smooth,
-        cum_merger,
-        labels=["smooth accretion (cumulative)", "merger mass (cumulative)"],
-        colors=["#4C72B0", "#DD8452"],
-        alpha=0.85,
-    )
-    ax.plot(z_steps_post, total, "k--", lw=2.2, label="total mass accreted (M0 - M(z))")
-    ax.set_xlabel("redshift $z$", fontsize=15)
-    ax.set_ylabel(r"accreted mass [$M_\odot/h$]", fontsize=15)
-    ax.tick_params(labelsize=12)
-    ax.legend(fontsize=10)
+    from foraois.utils import paper_style as ps
+
+    ps.save_data(file_name, (z_steps_post, cum_smooth, cum_merger, total))
+    plot_figure(z_steps_post, cum_smooth, cum_merger, total, file_name)
+    return f"{file_name}.pdf/.png"
+
+
+def plot_figure(z, cum_smooth, cum_merger, total, file_name):
+    """Single-column SciencePlots figure of the cumulative accretion decomposition."""
+    import matplotlib.pyplot as plt
+
+    from foraois.utils import paper_style as ps
+
+    ps.apply()
+    fig, ax = plt.subplots(figsize=(ps.COL, 2.7))
+    ax.stackplot(z, cum_smooth / 1e11, cum_merger / 1e11, labels=["smooth accretion (cumulative)", "merger mass (cumulative)"],
+                 colors=[ps.BLUE, ps.YELLOW], alpha=0.9)
+    ax.plot(z, total / 1e11, "k--", lw=1.0, label=r"total mass accreted, $M_0-M(z)$")
+    ax.set_xlabel(r"redshift $z$")
+    ax.set_ylabel(r"accreted mass [$10^{11}\,M_\odot/h$]")
+    ax.set_xlim(z.min(), z.max())
+    ax.legend(loc="upper left", frameon=False)
     fig.tight_layout()
-    fig.savefig(f"{file_name}.png", dpi=150)
-    return f"{file_name}.png"
+    ps.save(fig, file_name)
 
 
 def main():
@@ -106,7 +113,13 @@ def main():
     parser.add_argument("--dz", type=float, default=0.2)
     parser.add_argument("--n-trees", type=int, default=2000)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--replot", default=None, help="redraw from a saved .pkl (from a previous run) without recomputing")
     args = parser.parse_args()
+    if args.replot:
+        from foraois.utils import paper_style as ps
+
+        plot_figure(*ps.load_data(args.replot), args.output)
+        return
 
     out = build_figure(
         config=args.config,
