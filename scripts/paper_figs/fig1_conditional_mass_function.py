@@ -154,7 +154,7 @@ def m_res_for(M2):
     return M2 * 1.0e-4
 
 
-def run_column(config_path, M2, checkpoints, dz, n_trees_pch, n_trees_zh, model, n_grid, s_max_factor, n_jobs, seed, target_nupper=None):
+def run_column(config_path, M2, checkpoints, dz, n_trees_pch, n_trees_zh, model, n_grid, s_max_factor, n_jobs, seed, target_nupper=None, dz_zh=None, dz_zh_extra=()):
     """Grow independent realizations to the deepest checkpoint, reusing the
     same trajectories for every shallower checkpoint (cheaper than
     regrowing from scratch per z1, and matches how PCH08's own Fig 1
@@ -173,10 +173,12 @@ def run_column(config_path, M2, checkpoints, dz, n_trees_pch, n_trees_zh, model,
     the module docstring's 'Nupper compliance' section for why fig1's
     M_res/M2=1e-4 dynamic range makes this necessary (unlike the
     Section-5.4 main-progenitor-only benchmark, no fixed dz small enough
-    to be Nupper-compliant here is cheap to run). Zhang-Hui is unaffected
-    (its p_split is a genuine bounded first-crossing probability, not an
-    upper-bound approximation -- see fig3's module docstring) and keeps
-    using the fixed-dz grid regardless of this setting."""
+    to be Nupper-compliant here is cheap to run). Zhang-Hui uses a fixed
+    step, dz_zh (default: dz). Its binary-per-step construction registers at
+    most one resolved split per step, so at this M_res/M2 it needs a step
+    small enough that the EPS expected number of splits per step is small
+    (foraois.diagnostics.expected_eps_splits_per_step); dz=0.05 is not. Extra
+    ZH steps in dz_zh_extra are run for comparison and returned separately."""
     M_res = m_res_for(M2)
     z_max = max(checkpoints)
 
@@ -189,19 +191,24 @@ def run_column(config_path, M2, checkpoints, dz, n_trees_pch, n_trees_zh, model,
         for z1 in checkpoints:
             pch_by_z1[z1].append(pops[z1])
 
-    zh_by_z1 = {z1: [] for z1 in checkpoints}
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", UserWarning)  # first_crossing_step's coarse-grid warning is expected here
-        zh_pops = run_zh_ensemble(
-            config_path, M2, Z0, z_max, M_res, dz, checkpoints, n_trees_zh,
-            model=model, N_grid=n_grid, S_max_factor=s_max_factor, n_jobs=n_jobs, seed0=seed + 1_000_000,
-            label=f"Zhang-Hui M2={M2:.2e}",
-        )
-        for pops in zh_pops:
-            for z1 in checkpoints:
-                zh_by_z1[z1].append(pops[z1])
+    def _zh_at(dz_use, seed_off):
+        by_z1 = {z1: [] for z1 in checkpoints}
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)  # first_crossing_step's coarse-grid warning is expected here
+            pops_all = run_zh_ensemble(
+                config_path, M2, Z0, z_max, M_res, dz_use, checkpoints, n_trees_zh,
+                model=model, N_grid=n_grid, S_max_factor=s_max_factor, n_jobs=n_jobs, seed0=seed + 1_000_000 + seed_off,
+                label=f"Zhang-Hui M2={M2:.2e} dz={dz_use:g}",
+            )
+            for pops in pops_all:
+                for z1 in checkpoints:
+                    by_z1[z1].append(pops[z1])
+        return by_z1
 
-    return pch_by_z1, zh_by_z1
+    dz_zh = dz if dz_zh is None else dz_zh
+    zh_by_z1 = _zh_at(dz_zh, 0)
+    zh_extra = {d: _zh_at(d, 1000 * (i + 1)) for i, d in enumerate(dz_zh_extra)}
+    return pch_by_z1, zh_by_z1, zh_extra
 
 
 def save_data(panels, log_ratio_grid, args):
@@ -209,38 +216,51 @@ def save_data(panels, log_ratio_grid, args):
     from foraois.utils import paper_style as ps
 
     out = {"M2_values": np.array(M2_VALUES), "z1_values": np.array(Z1_VALUES), "log_ratio_grid": log_ratio_grid,
-           "args": np.array(str(vars(args)))}
-    for (row, col), (centers, f_pch, f_zh, f_eps) in panels.items():
+           "args": np.array(str(vars(args))), "dz_zh": np.array(args.dz_zh if args.dz_zh is not None else args.dz),
+           "dz_zh_extra": np.array(list(args.dz_zh_overlay))}
+    for (row, col), (centers, f_pch, f_zh, f_eps, extra) in panels.items():
         out[f"centers_{row}_{col}"], out[f"pch_{row}_{col}"], out[f"zh_{row}_{col}"] = centers, f_pch, f_zh
         if f_eps is not None:
             out[f"eps_{row}_{col}"] = f_eps
+        for i, (dz_e, f_e) in enumerate(extra.items()):
+            out[f"zhx{i}_{row}_{col}"] = f_e
     np.savez(str(ps.stem_of(args.output)) + ".npz", **out)
 
 
 def load_data(path):
     d = np.load(path)
+    dz_main = float(d["dz_zh"]) if "dz_zh" in d.files else None
+    dz_extra = [float(x) for x in d["dz_zh_extra"]] if "dz_zh_extra" in d.files else []
     panels = {}
     for row in range(len(Z1_VALUES)):
         for col in range(len(M2_VALUES)):
             eps = d[f"eps_{row}_{col}"] if f"eps_{row}_{col}" in d.files else None
-            panels[(row, col)] = (d[f"centers_{row}_{col}"], d[f"pch_{row}_{col}"], d[f"zh_{row}_{col}"], eps)
-    return panels, d["log_ratio_grid"]
+            extra = {dz_e: d[f"zhx{i}_{row}_{col}"] for i, dz_e in enumerate(dz_extra)}
+            panels[(row, col)] = (d[f"centers_{row}_{col}"], d[f"pch_{row}_{col}"], d[f"zh_{row}_{col}"], eps, extra)
+    return panels, d["log_ratio_grid"], dz_main
 
 
-def plot_figure(panels, log_ratio_grid, output):
-    """Full-width (7.1 in) SciencePlots figure: 4 redshift rows x 3 halo-mass columns."""
+def plot_figure(panels, log_ratio_grid, output, dz_main=None):
+    """Full-width (7.1 in) SciencePlots figure: 4 redshift rows x 3 halo-mass columns. PCH08 uses adaptive N_upper-compliant
+    steps; Zhang-Hui uses a fixed step (solid), with coarser steps shown thin for comparison."""
     import matplotlib.pyplot as plt
     from foraois.utils import paper_style as ps
 
     ps.apply()
     fig, axes = plt.subplots(len(Z1_VALUES), len(M2_VALUES), figsize=(ps.FULL, 5.6), sharex="col")
-    for (row, col), (centers, f_pch, f_zh, f_eps) in panels.items():
+    styles = [(":", 0.9), ("--", 0.9), ("-.", 0.9)]
+    for (row, col), (centers, f_pch, f_zh, f_eps, extra) in panels.items():
         ax = axes[row, col]
         if f_eps is not None:
             ax.plot(log_ratio_grid, f_eps, "-", color="0.6", lw=1.0, label="unmodified EPS (analytic)")
+        for (dz_e, f_e), (ls, lw) in zip(sorted(extra.items(), reverse=True), styles):
+            ax.step(centers, f_e, where="mid", color=ps.RED, lw=lw, ls=ls, alpha=0.7,
+                    label=rf"Zhang--Hui, $\Delta z={dz_e:g}$")
         ax.step(centers, f_pch, where="mid", color=ps.BLUE, lw=1.3, label="PCH08")
-        ax.step(centers, f_zh, where="mid", color=ps.RED, lw=1.3, label="Zhang--Hui")
-        finite = np.concatenate([f_pch[np.isfinite(f_pch)], f_zh[np.isfinite(f_zh)]])
+        ax.step(centers, f_zh, where="mid", color=ps.RED, lw=1.3,
+                label="Zhang--Hui" if dz_main is None else rf"Zhang--Hui, $\Delta z={dz_main:g}$")
+        finite = np.concatenate([f_pch[np.isfinite(f_pch)], f_zh[np.isfinite(f_zh)]] +
+                                [f_e[np.isfinite(f_e)] for f_e in extra.values()])
         ax.set_ylim(min(-2.0, np.min(finite) - 0.2) if finite.size else -2.0, 0.5)
         ax.set_xlim(-4.5, 0.05)
         if row == 0:
@@ -250,7 +270,7 @@ def plot_figure(panels, log_ratio_grid, output):
         ax.text(0.04, 0.94, rf"$z_1={Z1_VALUES[row]:g}$", transform=ax.transAxes, ha="left", va="top")
         if row == len(Z1_VALUES) - 1:
             ax.set_xlabel(r"$\log_{10}(M_1/M_2)$")
-    axes[0, -1].legend(loc="upper right", frameon=False)
+    axes[0, -1].legend(loc="upper right", frameon=False, fontsize=5.5)
     fig.tight_layout()
     ps.save(fig, output)
 
@@ -294,12 +314,17 @@ def main():
             "figure at this M_res/M2 ratio).",
         ),
     )
+    parser.add_argument("--dz-zh", type=float, default=None,
+                        help="fixed Zhang-Hui step (default: --dz). Binary-per-step ZH needs a step at which the EPS expected number "
+                             "of splits per step is small; at M_res/M2=1e-4 that is ~5e-4, not 0.05")
+    parser.add_argument("--dz-zh-overlay", type=float, nargs="*", default=[],
+                        help="extra ZH steps drawn thin for comparison (e.g. the coarse 0.05 of the earlier version)")
     parser.add_argument("--output", default="fig1_cmf.png")
     parser.add_argument("--replot", default=None, help="redraw from a saved .npz (from a previous run) without recomputing")
     args = parser.parse_args()
     if args.replot:
-        panels, grid = load_data(args.replot)
-        plot_figure(panels, grid, args.output)
+        panels, grid, dz_main = load_data(args.replot)
+        plot_figure(panels, grid, args.output, dz_main=dz_main)
         return
     n_trees_zh = args.n_trees_zh if args.n_trees_zh is not None else args.n_trees
 
@@ -322,17 +347,18 @@ def main():
     panels = {}
     for col, M2 in enumerate(M2_VALUES):
         print(f"M2={M2:.2e} ...", flush=True)
-        pch_by_z1, zh_by_z1 = run_column(
+        pch_by_z1, zh_by_z1, zh_extra = run_column(
             args.config, M2, Z1_VALUES, args.dz, args.n_trees, n_trees_zh, "cdm", args.n_grid, args.s_max_factor, args.n_jobs, args.seed + col * 10_000,
-            target_nupper=target_nupper,
+            target_nupper=target_nupper, dz_zh=args.dz_zh, dz_zh_extra=tuple(args.dz_zh_overlay),
         )
         for row, z1 in enumerate(Z1_VALUES):
             centers, log_f_pch, _ = cmf_histogram(pch_by_z1[z1], M2)
             _, log_f_zh, _ = cmf_histogram(zh_by_z1[z1], M2)
             log_f_eps = eps_analytic_cmf(M2, Z0, z1, cosmo_data, log_ratio_grid) if args.show_eps_reference else None
-            panels[(row, col)] = (centers, log_f_pch, log_f_zh, log_f_eps)
+            extra = {d: cmf_histogram(zh_extra[d][z1], M2)[1] for d in zh_extra}
+            panels[(row, col)] = (centers, log_f_pch, log_f_zh, log_f_eps, extra)
     save_data(panels, log_ratio_grid, args)
-    plot_figure(panels, log_ratio_grid, args.output)
+    plot_figure(panels, log_ratio_grid, args.output, dz_main=args.dz_zh)
 
 
 if __name__ == "__main__":

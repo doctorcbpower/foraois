@@ -69,7 +69,7 @@ Half-mode wavenumbers (`wdm_half_mode_k`, `fdm_half_mode_k`) solve `T(k_hm) = 1/
 
 ## Collapse barrier ([`collapse/`](../src/foraois/collapse) -- `delta_c(M, z, model, cosmo_data)`)
 
-The single interface for the spherical-collapse threshold, dispatching to a per-model implementation. Not consumed by `pch_trees.py` (see the module's own docstring): PCH08's Appendix A algorithm is derived for a barrier that depends only on `z`, and CDM/WDM (the only models with real content below) are mass-independent anyway, so there is nothing for that tree-building code to gain from routing through this. It is used by `zhang_hui_trees.py`, whose exact-rate algorithm is barrier-agnostic.
+The single interface for the spherical-collapse threshold, dispatching to a per-model implementation. Not consumed by `pch_trees.py` (see the module's own docstring): PCH08's Appendix A algorithm is derived for a barrier that depends only on `z`, and CDM/WDM (the only models with real content below) are mass-independent anyway, so there is nothing for that tree-building code to gain from routing through this. It is used by `zhang_hui_trees.py`, whose first-crossing solver accepts a general barrier (the tree builders currently use constant barriers).
 
 | Model | Function | Formula | Status |
 |---|---|---|---|
@@ -82,7 +82,7 @@ The single interface for the spherical-collapse threshold, dispatching to a per-
 
 Implements the Parkinson, Cole & Helly (2008) Appendix A branching-rate/rejection-sampling algorithm exactly, restricted to their `gamma1 >= 0` branch (best-fit constants `G0=0.57`, `gamma1=0.38`, `gamma2=-0.01`, hard-coded).
 
-**Validity at small `M_res / M0`.** PCH08 was calibrated at much coarser resolution than `M_res / M0 ~ 1e-5`. At small `M_res / M0` the main-progenitor histories from this implementation are near-deterministic and assemble earlier than the Zhang-Hui generator (median `M(z=1)/M0` = 0.80 against 0.42 at `M_res/M0 = 1e-4`); the two agree only for `M_res / M0` of order 1e-2. It is not established whether this is an implementation issue or a limit of the algorithm. See [PCH08_HIGH_Z_DIAGNOSTIC.md](PCH08_HIGH_Z_DIAGNOSTIC.md). The paper's single-point PCH08 versus Zhang-Hui comparison is at `M_res / M0 = 1e-2`; its conditional-mass-function and major-merger figures use `M_res / M2 = 1e-4` through the adaptive full-tree grower in `scripts/paper_figs/_treegrowth.py`, a different code path from the one the diagnostic note measured, so whether they are affected is not established.
+**Timestep compliance.** PCH08 requires the expected number of resolved splits per step (`N_upper`) to be small, about 0.1 or below, because a step registers at most one split. `N_upper` rises as `M_res / M0` falls, so a fixed `dz` that is adequate at `M_res / M0 = 1e-2` can be far too coarse at `1e-4` (max `N_upper` = 14 at `dz = 0.05`, 0.14 at `dz = 0.0005` for `M0 = 1e12`, `M_res / M0 = 1e-4`). When `N_upper >> 1` the main-progenitor histories become close to deterministic and assemble too early. Check `foraois.diagnostics.expected_splits_per_step` and reduce `dz` until the statistic of interest is stable. The Zhang-Hui builder is also limited to one split per step; compare its step with the EPS expected number of splits per step (`foraois.diagnostics.expected_eps_splits_per_step`). See [PCH08_HIGH_Z_DIAGNOSTIC.md](PCH08_HIGH_Z_DIAGNOSTIC.md) for the table. The paper's conditional-mass-function and major-merger figures use `M_res / M2 = 1e-4` through the adaptive full-tree grower in `scripts/paper_figs/_treegrowth.py`, which adapts the step to `N_upper`.
 
 At each step, for a halo of mass `M2` at `sigma2 = sigma(M2)`, with `M_res` the mass resolution:
 
@@ -128,7 +128,7 @@ Per step: draw `r1`; no split if `r1 > Nupper`, mass becomes `M0*(1-F)`. Otherwi
 
 ## First-crossing distributions ([`first_crossing.py`](../src/foraois/first_crossing.py))
 
-Implements the Zhang & Hui (2006) exact first-crossing solution for a Markovian excursion-set walk (valid for a **sharp-k window** only) with an arbitrary moving barrier `B(S)` -- not wired into `PCHMergerTree` (its Appendix A rate has no defined meaning for a non-fitted barrier), but is the basis of `zhang_hui_trees.py`, below.
+Implements the Zhang & Hui (2006) first-crossing solution (a numerical solution of their Volterra equation; closed form for a constant barrier) for a Markovian excursion-set walk (valid for a **sharp-k window** only) with an arbitrary moving barrier `B(S)` -- not wired into `PCHMergerTree` (its Appendix A rate has no defined meaning for a non-fitted barrier), but is the basis of `zhang_hui_trees.py`, below.
 
 ```
 P0(delta,S) = exp(-delta^2/2S) / sqrt(2*pi*S)
@@ -139,9 +139,9 @@ g2(S,S') = [2*dB/dS - (B(S)-B(S'))/(S-S')] * P0(B(S)-B(S'), S-S')
 
 `solve_first_crossing(B, S_max, N, dBdS=None)` discretizes to `N+1` points and solves by forward substitution (O(N^2)), with a dedicated near-diagonal treatment for the singular `g2` term. Validated against closed-form flat/linear-barrier solutions and an independent Monte Carlo random walk.
 
-## Zhang-Hui exact-rate tree generation ([`zhang_hui_trees.py`](../src/foraois/zhang_hui_trees.py) -- `ZhangHuiMergerTree`)
+## Zhang-Hui tree generation ([`zhang_hui_trees.py`](../src/foraois/zhang_hui_trees.py) -- `ZhangHuiMergerTree`)
 
-The barrier-agnostic counterpart to `PCHMergerTree`: instead of PCH08's fitted `(G0, gamma1, gamma2)` rate, samples progenitor masses directly from `first_crossing.py`'s exact solution, evaluated against `collapse.delta_c(M, z, model, cosmo_data)`. This section summarizes the current API and its known limitations.
+The unfitted counterpart to `PCHMergerTree`: instead of PCH08's fitted `(G0, gamma1, gamma2)` rate, samples one binary split per step from `first_crossing.py`'s first-crossing distribution, evaluated against `collapse.delta_c(M, z, model, cosmo_data)`. The binary-per-step construction is an approximation to the EPS tree, and like PCH08 it needs a step small enough that the EPS expected number of splits per step is small (`foraois.diagnostics.expected_eps_splits_per_step`). This section summarizes the current API and its known limitations.
 
 Origin-shift convention (Bond, Cole, Efstathiou & Kaiser 1991): a progenitor of a halo `(M0, z0)` at target redshift `z1` is a first crossing of the shifted barrier `B(S) = delta_c(M(S), z1) - delta_c(M0, z0)` at `S = sigma(M(S))^2 - sigma(M0)^2`. For CDM/WDM (and FDM's current placeholder), `delta_c` is mass-independent, so `B(S)` reduces to the constant `delta_c(z1) - delta_c(z0)` -- the closed-form Press-Schechter/inverse-Gaussian case.
 
@@ -153,7 +153,7 @@ Three backends, differing in generality vs. speed:
 
 **Resolved limitation (was open, closed via a literature re-read):** a drawn progenitor mass `M2` originally had no guaranteed lower bound on its complement (`M0*(1-F_zh) - M2`, the "continuing" branch) the way PCH08's `q`-range restriction guarantees both split fragments stay resolved -- this complement could land below `M_res`, or even go negative, in **over half of steps** in a direct check at `dz=0.2`. Checked directly against N23's own footnote 3: their progenitor mass `M'` is drawn from `[M_res, M-M_res]` -- bounded away from *both* ends -- which by construction keeps both `M'` and `M-M'` `>= M_res`. Both backends now draw from the matching restricted range (`first_crossing_step`'s `S_lower`/`p_split`) rather than the unrestricted `[0, S_res]` -- checked directly, `0` of `221` two-progenitor draws landed below `M_res` afterward. `smooth_accretion` is still computed as the conservation residual (`parent_mass - max(progenitors) - merger_mass` in `build_tree`; the array equivalent in `build_forest_numpy`), kept as a cheap consistency check, but now provably equals the simple `F_zh*M` formula rather than folding in a real leftover.
 
-Comparing CDM output against `PCHMergerTree` at matched `(M0, z0, z_max, M_res, dz)` on a real Planck cosmology (`scripts/validate_zhang_hui_vs_pch08.py`, `n_trees=20000`, `dz=0.01` -- small enough that `Nupper` stays comfortably below 1 for both backends, see the `dz` caveat above): survival fraction identical; mean surviving mass currently runs **~18% lower** than PCH08's. N23 explicitly do not expect exact agreement here (their unconstrained trees are not recalibrated against PCH08/N-body), so this is reported, not treated as a defect to eliminate. This number has moved (and flipped sign) several times as genuine bugs were found and fixed in both backends' rate calculations -- see the paper's own Section 4.4 for the full history rather than treating the figure quoted here as final; re-run the script above for the current value before citing it.
+Comparing CDM output against `PCHMergerTree` at matched `(M0, z0, z_max, M_res, dz)` on a real Planck cosmology (`scripts/validate_zhang_hui_vs_pch08.py`, `n_trees=20000`, `M0=1e12`, `M_res=1e10`, `dz=0.005`): both survival fractions are 1.000 and the mean surviving mass of Zhang-Hui is about 19% below PCH08's, stable at 18-19% for `dz` from 0.01 to 0.002. The origin of the residual difference is not established. N23 do not expect agreement here (their unconstrained trees are not recalibrated against PCH08 or N-body). Re-run the script for the current value.
 
 ## Halo mass functions ([`mass_function_utils.py`](../src/foraois/mass_function_utils.py))
 

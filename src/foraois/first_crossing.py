@@ -22,14 +22,14 @@ barrier between S and S+dS, satisfies the Volterra integral equation
 
 which reduces to a triangular linear system on a uniform S-grid, solved by
 forward substitution -- no matrix-inversion package, no Monte Carlo. It
-reproduces the classic flat/linear-barrier analytic solutions exactly as a
+reproduces the classic flat/linear-barrier analytic solutions, to discretisation error, as a
 special case (Section 2.2, eq. 18), which is the main thing this module's
 tests check it against, together with a direct Monte Carlo random walk
 (reproducing the paper's own Figure 2 cross-check).
 
 This is a general-purpose replacement for PCH08's fitted (gamma1, gamma2,
 G0) branching-rate machinery: PCH08's fit is specifically calibrated for a
-constant (CDM) barrier under a top-hat window; f(S) here is exact for any
+constant (CDM) barrier under a top-hat window; f(S) here is a numerical solution (discretisation error only) for any
 barrier shape (constant, linear, ellipsoidal-collapse, mass-dependent
 SIDM/FDM barriers, ...) as long as the walk is Markovian. Nothing in this
 module is wired into PCHMergerTree/pch_trees.py yet -- this is a

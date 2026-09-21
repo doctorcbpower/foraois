@@ -3,7 +3,7 @@ A shared interface for foraois' tree-building algorithms.
 
 `foraois` has two structurally different tree-building algorithms --
 `pch_trees.PCHMergerTree` (PCH08's fitted rate) and
-`zhang_hui_trees.ZhangHuiMergerTree` (the exact Zhang-Hui/N23 rate) -- and
+`zhang_hui_trees.ZhangHuiMergerTree` (binary-per-step trees on the Zhang-Hui/N23 first-crossing distribution) -- and
 room for future backends (e.g. a generative-ML approach). `build_tree(M0,
 z0, z_max, M_res, dz=0.1)` and `build_forest_numpy(M0_array, z0, z_max,
 M_res, dz=0.1)` have identical signatures on both classes, and

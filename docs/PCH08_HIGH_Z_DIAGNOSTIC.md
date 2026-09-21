@@ -1,52 +1,58 @@
-# PCH08 main-progenitor histories at small M_res and high redshift: a diagnostic note
+# Timestep compliance of PCH08 histories at small M_res / M0
 
-Status: open question. This note records what was observed and what has and has not been established. It does not
-conclude whether the behaviour is an implementation issue or a regime limitation.
+Status: explained. Near-deterministic PCH08 main-progenitor histories at small `M_res / M0` occur when the fixed step `dz`
+violates the single-split-per-step requirement (`N_upper` of order 1 or larger), and disappear as `dz` is reduced.
 
 ## Observation
 
-With `PCHMergerTree.build_forest_numba` (and `build_forest_numpy`), the main-progenitor mass history at small `M_res`
-is nearly deterministic and assembles much earlier than the Zhang & Hui generator, and than mean accretion histories
-(for example Correa et al. 2015 for the z0 = 0 case). `scripts/diagnose_pch08_high_z.py` reproduces the numbers below
-(60 trees, `dz = 0.05`, masses in Msun/h; ratios only).
+With `PCHMergerTree.build_forest_numba` (and `build_forest_numpy`) at a fixed `dz`, the main-progenitor histories at small
+`M_res / M0` can be nearly deterministic (a 16-84 per cent range of a few hundredths in `M(z=1)/M0`) and assemble earlier than
+those of the Zhang & Hui generator. Earlier versions of this note recorded this at `dz = 0.05` with `M_res` down to 1e-8 of the
+halo mass and left its origin open.
 
-| Setup | PCH08, M(z)/M0 median [16, 84] | Zhang & Hui | Resolved merger, PCH08 vs ZH (fraction of steps) |
-|---|---|---|---|
-| z0 = 0, M0 = 1e12, M_res = 1e4, z = 1 | 0.840 [0.840, 0.840] | 0.449 [0.245, 0.614] | 2.2% vs 44.7% |
-| same, z = 2 | 0.688 [0.688, 0.688] | 0.231 [0.140, 0.390] | 1.9% vs 42.2% |
-| z0 = 5, M0 = 3e10, M_res = 1e4, z = 10 | 0.398 [0.398, 0.398] | 0.037 [0.015, 0.067] | 3.1% vs 30.2% |
-| z0 = 5, M0 = 3e13, M_res = 1e4, z = 10 | 0.294 [0.294, 0.294] | 0.007 [0.003, 0.018] | 1.3% vs 50.8% |
-| z0 = 0, M0 = 1e12, z = 1, M_res = 1e8 | 0.802 [0.782, 0.806] | 0.419 [0.279, 0.673] | 42.6% vs 37.4% |
-| z0 = 0, M0 = 1e12, z = 1, M_res = 1e10 | 0.542 [0.338, 0.686] | 0.436 [0.262, 0.582] | 15.9% vs 16.5% |
+## Cause
 
-## What is established
+PCH08 (their section 2.1) requires the expected number of resolved splits in a step to be small (`N_upper` of order 0.1) because a
+step can register at most one split. `PCHMergerTree` uses one fixed `dz` for the whole forest and does not adapt it to `N_upper`.
+`N_upper` grows as `M_res / M0` falls, so a step that is compliant at `M_res / M0 = 1e-2` is not at `1e-4`. Once `N_upper >> 1`
+the step splits almost every time, the mass lost to the unresolved side is fixed by the mean rate, and the history becomes close
+to deterministic.
 
-* The near-zero width of the PCH08 distribution and the early assembly are reproducible, at the standard z0 = 0 anchor as well
-  as at z0 = 5.
-* They do not depend on the backend (numpy and numba agree), on `dz` (0.02 to 0.2 changes M(z=10)/M0 by under 2%), or on the
-  P(k)/barrier redshift convention (`CosmoData(redshift=[0.0])` and `[5.0]` give the same PCH08 numbers).
-* At `M_res = 1e4` PCH08 resolves a merger in about 2 to 3% of steps and books almost all accreted mass as smooth accretion
-  (merged/smooth mass ratio of order 1e-6 to 1e-4, against 3 to 6 for Zhang & Hui).
-* PCH08 approaches Zhang & Hui only when `M_res` is around 1% of M0 (last row).
+## Table
 
-## What is not established
+`scripts/timestep_compliance_table.py`: `M0 = 1e12 Msun/h`, `z0 = 0`, 3000 trees, main-progenitor `M(z=1)/M0`. `max N_upper` is the
+largest mean-field PCH08 `N_upper` along the trajectory. Sampling error on a median is about 0.01.
 
-* Whether this is an implementation issue (for example in the treatment of fragments near or below `M_res`, the tabulated
-  branching-rate grids, or the mass bookkeeping of the main branch) or an intrinsic limit of the PCH08 algorithm when `M_res / M0`
-  is very small. PCH08's own calibration used much coarser resolution than 1e-8 of the halo mass.
-* Whether `build_forest_numba` and `build_forest_numpy` return the same quantity as a `build_tree`-style main-progenitor history.
-* Whether the earlier "PCH08 vs Zhang-Hui, about -11% in mean mass" validation used a resolution in the regime where the two agree
-  (last row) rather than the small-`M_res` regime shown above.
+| M_res/M0 | dz | max N_upper | PCH08 median [16, 84] | Zhang & Hui median |
+|---|---|---|---|---|
+| 1e-2 | 0.05   | 0.32 | 0.55 [0.36, 0.68] | 0.45 |
+| 1e-2 | 0.0005 | 0.00 | 0.56 [0.37, 0.69] | 0.42 |
+| 1e-4 | 0.05   | 14.4 | 0.81 [0.79, 0.81] | 0.49 |
+| 1e-4 | 0.01   | 2.8  | 0.76 [0.59, 0.79] | 0.46 |
+| 1e-4 | 0.002  | 0.57 | 0.56 [0.36, 0.69] | 0.45 |
+| 1e-4 | 0.0005 | 0.14 | 0.56 [0.37, 0.69] | 0.44 |
 
-## Suggested checks (none done)
+At `M_res / M0 = 1e-4` the PCH08 statistic moves from 0.81 to 0.56 as `N_upper` falls from 14 to 0.14, and its range opens up.
+The last two rows agree with each other, so the statistic is approaching stability. `N_upper = 0.14` is close to, not below, the
+0.1 target.
 
-1. Compare the accepted-split probability per step against the analytic PCH08 expectation as a function of `M_res / M0`.
-2. Check the range of `logmass_grid` / `alpha_grid` / `j_u_grid` against fragment masses down to `M_res`.
-3. Test the mass-conservation identity (`mass_history`, `smooth_accretion`, `merger_mass`) at very small `M_res`.
-4. Decide whether to document a minimum `M_res / M0` for PCH08, or to add a guard that warns when it is below it.
+## What this does and does not show
 
-## Downstream impact
+* Compliance, numerical convergence and physical interpretation are separate. The table addresses the first two. There is no
+  N-body reference here, so it says nothing about which algorithm is closer to simulations.
+* At small `dz` a difference between the two algorithms remains: the PCH08 median `M(z=1)/M0` is about 1.3 times the Zhang & Hui
+  value at both resolution ratios. Its origin is not established. Its sign is consistent with the PCH08 target split rate lying below
+  the EPS rate, but that has not been quantified as the cause.
+* The Zhang & Hui builder also draws at most one split per step. At `M_res / M0 = 1e-4`, `dz = 0.05` the EPS expected number of splits
+  per step is about 7.5 (`foraois.diagnostics.expected_eps_splits_per_step`), so its split probability saturates and the same
+  timestep requirement applies. Its steps must be compared with the EPS expected split count, not with `N_upper`.
+* Zhang & Hui is an approximation, not an exact sampler of the EPS tree: in one configuration (`M0 = 1e12`, `M_res / M0 = 1e-2`,
+  `dz = 0.02`, `scripts/validate_zh_single_step_vs_eps.py`) its single-step smaller-fragment density agrees with the analytic EPS
+  density to about 10 per cent over most of the resolved range and is lower by up to 45 per cent in the bins nearest `M_res`.
 
-Any use of PCH08 to follow assembly to high redshift with small `M_res` (as in Ashvini's high-z black-hole work, which needs
-halos resolved down to about 1e4 Msun at z of order 20) should not assume it is equivalent to Zhang & Hui. Ashvini's own
-comparison against PCH08 was therefore not possible and the old statement that it agreed to 0.02 to 0.14 dex cannot be reproduced.
+## Practical guidance
+
+Choose `dz` so that the largest `N_upper` (PCH08, `foraois.diagnostics.expected_splits_per_step`) or EPS expected splits per step
+(both algorithms, `foraois.diagnostics.expected_eps_splits_per_step`) along the trajectory is below about 0.1, and check that the
+statistic of interest is stable when `dz` is reduced further. The paper's PCH08 conditional-mass-function and major-merger runs use
+`scripts/paper_figs/_treegrowth.py`, which adapts the step to `N_upper`.

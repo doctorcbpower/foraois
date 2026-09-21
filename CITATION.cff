@@ -28,7 +28,7 @@ keywords:
   - excursion set theory
   - Monte Carlo
 license: MIT
-version: 0.1.0
+version: 0.1.1
 date-released: "2026-08-22"
 # No preferred-citation yet: that field should point to the paper
 # describing this software itself, not the algorithms it implements --

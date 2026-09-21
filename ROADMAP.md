@@ -34,7 +34,3 @@ Known gaps and open questions, in no particular order.
   backend (`zhang_hui_constrained_trees.py`) doesn't yet have an equivalent
   -- it only tracks the main (running-maximum) branch.
 
-- **PCH08 main-progenitor histories at small `M_res / M0`.** At `M_res` of order 1e-8 of the halo mass the PCH08 main
-  progenitor is near-deterministic and assembles much earlier than Zhang & Hui, with almost no resolved mergers; it resembles
-  Zhang & Hui only when `M_res` is about 1% of `M0`. It is not established whether this is an implementation issue or a
-  regime limitation. See `docs/PCH08_HIGH_Z_DIAGNOSTIC.md` and `scripts/diagnose_pch08_high_z.py`.

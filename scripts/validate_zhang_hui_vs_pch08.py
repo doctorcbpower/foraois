@@ -3,7 +3,7 @@
 Compare ZhangHuiMergerTree's CDM output against PCHMergerTree's, on the
 same real Planck 2018 CAMB cosmology (config/planck2018_camb.yml).
 
-N23 explicitly defer recalibrating their unconstrained (exact-rate) trees
+N23 explicitly defer recalibrating their unconstrained trees
 against N-body/PCH08 (see ROADMAP.md) -- so this script's job is to
 characterize and report any discrepancy, not assert tight agreement. Both
 backends are run over the same N independent trees at fixed (M0, z0,
@@ -12,7 +12,7 @@ main-progenitor mass distribution are compared.
 
 Uses build_forest_numpy for both backends (Zhang-Hui's closed-form
 flat-barrier sampler -- see zhang_hui_trees.py's
-_build_forest_flat_barrier_numpy docstring -- makes this both exact and
+_build_forest_flat_barrier_numpy docstring -- makes this
 fast enough that --n-trees can be large).
 
 With --output-figure, also produces the surviving-mass histogram figure.
@@ -145,8 +145,8 @@ def build_figure(pch_alive, zh_alive, stats, file_name="pch08_vs_zhanghui"):
         np.log10(max(pch_alive.max(), zh_alive.max())),
         40,
     )
-    ax.hist(pch_alive, bins=bins, histtype="step", lw=1.3, color=ps.BLUE, label="PCH08 (fitted rate)")
-    ax.hist(zh_alive, bins=bins, histtype="step", lw=1.3, color=ps.RED, label="Zhang--Hui (exact rate)")
+    ax.hist(pch_alive, bins=bins, histtype="step", lw=1.3, color=ps.BLUE, label="PCH08")
+    ax.hist(zh_alive, bins=bins, histtype="step", lw=1.3, color=ps.RED, label="Zhang--Hui")
     ax.axvline(pch_alive.mean(), color=ps.BLUE, ls="--", lw=0.9)
     ax.axvline(zh_alive.mean(), color=ps.RED, ls="--", lw=0.9)
     ax.set_xscale("log")
@@ -203,10 +203,10 @@ def main():
         f"M0={stats['M0']:.2e} Msun/h, z0={stats['z0']} -> z_max={stats['z_max']}, "
         f"M_res={stats['M_res']:.2e} Msun/h, dz={stats['dz']}, n_trees={stats['n_trees']}"
     )
-    print("\nPCH08 (fitted rate)")
+    print("\nPCH08")
     print(f"  fraction with M > M_res at z_max={stats['z_max']}: {stats['pch_frac_alive']:.4f}")
     print(f"  surviving-tree final mass: mean={stats['pch_mean']:.4e} Msun/h")
-    print("\nZhang-Hui (exact rate)")
+    print("\nZhang-Hui")
     print(f"  fraction with M > M_res at z_max={stats['z_max']}: {stats['zh_frac_alive']:.4f}")
     print(f"  surviving-tree final mass: mean={stats['zh_mean']:.4e} Msun/h")
 

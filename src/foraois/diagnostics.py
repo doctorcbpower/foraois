@@ -83,38 +83,58 @@ def expected_splits_per_step(tree_generator, M0, z0, z_max, M_res, dz=0.1):
     return z_steps, Nupper, M_trajectory
 
 
+def expected_eps_splits_per_step(cosmo_data, M0, z0, z1, M_res, model="cdm", n_q=400):
+    """
+    Analytic EPS expected number of binary splits, with the smaller fragment resolved
+    (M_res <= M2 <= M0/2), in one step z0 -> z1 for a halo of mass M0:
+
+        E = int_{q_res}^{1/2} (1/q) f(dS, d_omega) |dS/dM2| M0 dq,   q = M2/M0,
+
+    with f the flat-barrier first-crossing density
+    d_omega exp(-d_omega^2 / 2 dS) / (sqrt(2 pi) dS^{3/2}) and dS = sigma^2(M2) - sigma^2(M0).
+    Both single-split-per-step constructions need E small (about 0.1 or below, the same requirement as
+    PCH08's N_upper criterion), but E is a property of the EPS rate and does not depend on either
+    backend's sampler. A binary-per-step tree (Zhang-Hui) draws at most one split per step, so at
+    E >> 1 its split probability saturates below E.
+
+    Parameters
+    ----------
+    cosmo_data : CosmoData
+        Provides sigma(M) and delta_col(z); its sigma grid is populated when a tree generator is
+        constructed from it. The barrier is flat, so `model` only selects delta_c.
+    n_q : int
+        Log-spaced quadrature points in q.
+
+    Returns
+    -------
+    float
+    """
+    from foraois.collapse import delta_c
+
+    if M_res * 2.0 >= M0:
+        return 0.0
+    d_omega = float(delta_c(M_res, z1, model, cosmo_data)) - float(delta_c(M_res, z0, model, cosmo_data))
+    sigma0_sq = float(cosmo_data.sigma_at_logmass(np.log10(M0))) ** 2
+    lnq = np.linspace(np.log(M_res / M0), np.log(0.5), n_q)
+    q = np.exp(lnq)
+    logM2 = np.log10(M0 * q)
+    sig = np.asarray(cosmo_data.sigma_at_logmass(logM2), dtype=float)
+    dS = np.maximum(sig**2 - sigma0_sq, 1e-300)
+    dS_dlnM = 2.0 * sig**2 * np.abs(np.asarray(cosmo_data.dlogsigma_at_logmass(logM2), dtype=float))
+    f = d_omega * np.exp(-0.5 * d_omega**2 / dS) / (np.sqrt(2.0 * np.pi) * dS**1.5)
+    return float(np.trapezoid(f * dS_dlnM / q, lnq))
+
+
 def expected_splits_per_step_zh(cosmo_data, M0, z0, z_max, M_res, dz=0.1, model="cdm", N_grid=40, S_max_factor=8.0):
     """
-    Zhang-Hui analogue of expected_splits_per_step: a deterministic
-    (mean-field, no randomness) trajectory of `p_split` -- the per-step
-    resolved-split probability `first_crossing_step` computes exactly via
-    quadrature (see its own docstring) -- for a single halo mass M0
-    evolving from z0 to z_max on a fixed dz grid.
+    Trajectory of the Zhang-Hui single-step split probability `p_split` (from `first_crossing_step`) for a
+    single halo mass M0 evolving from z0 to z_max on a fixed dz grid (mean-field, no randomness).
 
-    Why this is needed: PCHMergerTree's Nupper is an *approximate upper
-    bound* that is not bounded to [0,1] by construction, and can reach
-    into the hundreds at a coarse dz (see PCHMergerTree's own class
-    docstring and this module's Nupper checks) -- a clear, unambiguous
-    failure mode. Zhang-Hui's p_split, by contrast, is an exact CDF-derived
-    probability and is always in [0,1]; it can never "blow up" the way
-    Nupper does. But the underlying concern PCH08's Nupper<<1 design target
-    guards against is not "does the upper-bound estimator exceed 1" per se
-    -- it is that a single step can register at most ONE resolved split,
-    so if the *true* expected number of resolved splits across the step is
-    not small, the single-split-per-step construction under-counts real
-    multi-merger structure within that step, for *either* backend's
-    branching kernel. p_split close to 1 is exactly the regime where that
-    under-counting risk is largest for Zhang-Hui (a near-certain split
-    every step leaves no room to distinguish "one split" from "several
-    splits compressed into one draw"), so we treat p_split itself as the
-    Zhang-Hui-side quantity to hold small, by direct analogy with Nupper,
-    and adopt the same qualitative target (<<1, ~0.1 in practice) pending
-    a more rigorous derivation. This has NOT been derived from first
-    principles the way PCH08's eq. A5 Nupper was -- treat it as a
-    reasonable, symmetric, empirically-motivated proxy (see this module's
-    tests / the paper's Section 5.4 discussion for a convergence check
-    confirming p_split<=0.1 tracks where Zhang-Hui's own results stop
-    changing with dz), not an authoritative bound.
+    `p_split` is bounded by 1, so unlike Nupper it cannot exceed the single-split-per-step limit; it saturates
+    instead. A small `p_split` does not by itself show that the step is adequate: the quantity to compare
+    with 0.1 is the EPS expected number of splits per step, `expected_eps_splits_per_step`. When that is
+    large the Zhang-Hui builder, which draws at most one split per step, under-counts splits and `p_split`
+    saturates below it. This function is kept for the trajectory of `p_split` itself.
 
     Returns
     -------

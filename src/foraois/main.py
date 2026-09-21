@@ -32,7 +32,7 @@ def main():
         help=(
             "Tree-building algorithm: "
             '"pch08" (Parkinson, Cole & Helly 2008 fitted rate, default), '
-            '"zhang-hui" (exact Zhang & Hui 2006 rate, barrier-agnostic), '
+            '"zhang-hui" (binary-per-step trees from the Zhang & Hui 2006 first-crossing distribution), '
             '"constrained" (Nadler et al. 2023 Brownian-bridge-constrained '
             "branch guaranteed to reach --M1 at --z1)"
         ),

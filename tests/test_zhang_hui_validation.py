@@ -72,3 +72,17 @@ def test_cdm_step_cumulative_probability_matches_direct_monte_carlo(zh_tree_gene
         cum_mc = np.sum(mc <= S_test) / n_walks
         cum_solver = float(np.interp(S_test, S_grid, F_cum))
         assert cum_solver == pytest.approx(cum_mc, abs=0.015)
+
+
+def test_eps_expected_splits_scale_linearly_with_small_steps(zh_tree_generator):
+    """E is the EPS rate times the step: halving the step halves it (small-step limit), and a lower M_res raises it."""
+    from foraois.diagnostics import expected_eps_splits_per_step
+
+    cd = zh_tree_generator.cosmo_data
+    M0 = 1e12
+    e1 = expected_eps_splits_per_step(cd, M0, 0.0, 0.002, M0 * 1e-3)
+    e2 = expected_eps_splits_per_step(cd, M0, 0.0, 0.001, M0 * 1e-3)
+    assert e1 > 0.0
+    assert e2 == pytest.approx(0.5 * e1, rel=0.05)
+    assert expected_eps_splits_per_step(cd, M0, 0.0, 0.002, M0 * 1e-4) > e1
+    assert expected_eps_splits_per_step(cd, M0, 0.0, 0.002, 0.6 * M0) == 0.0
