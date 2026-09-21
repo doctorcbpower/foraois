@@ -13,7 +13,8 @@ halo mass and left its origin open.
 ## Cause
 
 PCH08 (their section 2.1) requires the expected number of resolved splits in a step to be small (`N_upper` of order 0.1) because a
-step can register at most one split. `PCHMergerTree` uses one fixed `dz` for the whole forest and does not adapt it to `N_upper`.
+step can register at most one split. We adopt `N_upper <~ 0.1` as a practical criterion for the single-split construction; it is
+not a mathematical validity boundary. `PCHMergerTree` uses one fixed `dz` for the whole forest and does not adapt it to `N_upper`.
 `N_upper` grows as `M_res / M0` falls, so a step that is compliant at `M_res / M0 = 1e-2` is not at `1e-4`. Once `N_upper >> 1`
 the step splits almost every time, the mass lost to the unresolved side is fixed by the mean rate, and the history becomes close
 to deterministic.
@@ -34,18 +35,19 @@ largest mean-field PCH08 `N_upper` along the trajectory. Sampling error on a med
 
 At `M_res / M0 = 1e-4` the PCH08 statistic moves from 0.81 to 0.56 as `N_upper` falls from 14 to 0.14, and its range opens up.
 The last two rows agree with each other, so the statistic is approaching stability. `N_upper = 0.14` is close to, not below, the
-0.1 target.
+0.1 criterion.
 
 ## What this does and does not show
 
 * Compliance, numerical convergence and physical interpretation are separate. The table addresses the first two. There is no
   N-body reference here, so it says nothing about which algorithm is closer to simulations.
 * At small `dz` a difference between the two algorithms remains: the PCH08 median `M(z=1)/M0` is about 1.3 times the Zhang & Hui
-  value at both resolution ratios. Its origin is not established. Its sign is consistent with the PCH08 target split rate lying below
+  value at both resolution ratios. Its origin is not established. Its sign is consistent with the PCH08 split rate lying below
   the EPS rate, but that has not been quantified as the cause.
 * The Zhang & Hui builder also draws at most one split per step. At `M_res / M0 = 1e-4`, `dz = 0.05` the EPS expected number of splits
   per step is about 7.5 (`foraois.diagnostics.expected_eps_splits_per_step`), so its split probability saturates and the same
-  timestep requirement applies. Its steps must be compared with the EPS expected split count, not with `N_upper`.
+  timestep requirement applies. Its steps must be compared with the EPS expected split count, not with `N_upper`. We adopt `E <~ 0.1`
+  in the same practical sense.
 * Zhang & Hui is an approximation, not an exact sampler of the EPS tree: in one configuration (`M0 = 1e12`, `M_res / M0 = 1e-2`,
   `dz = 0.02`, `scripts/validate_zh_single_step_vs_eps.py`) its single-step smaller-fragment density agrees with the analytic EPS
   density to about 10 per cent over most of the resolved range and is lower by up to 45 per cent in the bins nearest `M_res`.

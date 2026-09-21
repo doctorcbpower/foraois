@@ -16,7 +16,7 @@ Two independent things are checked:
    it is in PCH08's own adaptive-Delta_z algorithm, because
    PCHMergerTree uses one fixed dz shared across a whole forest (see the
    class docstring). This lets you check Nupper stays comfortably below 1
-   (PCH08 target: ~0.1) for a chosen dz before trusting the output.
+   (practical criterion: <~ 0.1) for a chosen dz before trusting the output.
 
 2. Sampling correctness (true_split_probability / check_sampling_
    consistency): the rejection-sampling scheme in _build_forest_numpy /
@@ -45,7 +45,7 @@ def expected_splits_per_step(tree_generator, M0, z0, z_max, M_res, dz=0.1):
     mass M0 evolving from z0 to z_max on the given fixed step grid --
     Nupper is an upper bound on the expected number of resolved splits in
     that step (PCH08 eq. A5). Values well above PCH08's own adaptive-
-    stepping target (~0.1) mean dz is too coarse for that part of the tree's
+    stepping value (~0.1) mean dz is too coarse for that part of the tree's
     history: multiple mergers per step become non-negligible, which the
     single-split-per-step architecture here doesn't model.
 
