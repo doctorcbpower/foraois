@@ -7,7 +7,7 @@ CosmoData          -- cosmology/model layer: power spectrum, sigma(M),
                        delta_col(z) (see foraois.cosmo_utils)
 PCHMergerTree       -- Parkinson, Cole & Helly (2008) fitted-rate trees,
                        with serial/numpy/numba backends
-ZhangHuiMergerTree  -- exact, barrier-agnostic Zhang & Hui (2006) trees
+ZhangHuiMergerTree  -- binary-per-step Zhang & Hui (2006) trees on a first-crossing solver
 build_constrained_tree -- Nadler et al. (2023) Brownian-bridge-constrained
                        trees, guaranteed to reach a chosen (M1, z1)
 TreeAlgorithm       -- the build_tree/build_forest_numpy Protocol both

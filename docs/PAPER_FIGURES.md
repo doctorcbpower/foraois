@@ -25,9 +25,12 @@ width for the DM-model comparison and the conditional mass function.
 | Smooth accretion vs. discrete mergers | [`scripts/make_accretion_decomposition_figure.py`](../scripts/make_accretion_decomposition_figure.py) | `python scripts/make_accretion_decomposition_figure.py --output smooth_vs_merger` |
 | PCH08 branching-rate sampling validation | [`scripts/make_validation_figure.py`](../scripts/make_validation_figure.py) | `python scripts/make_validation_figure.py --output branching_rate_validation` |
 | PCH08 vs. Zhang-Hui surviving-mass comparison | [`scripts/validate_zhang_hui_vs_pch08.py`](../scripts/validate_zhang_hui_vs_pch08.py) | `python scripts/validate_zhang_hui_vs_pch08.py --output-figure pch08_vs_zhanghui` (defaults: `dz=0.005`, `n_trees=20000`) |
-| PCH08 vs. Zhang-Hui conditional mass function | [`scripts/paper_figs/fig1_conditional_mass_function.py`](../scripts/paper_figs/fig1_conditional_mass_function.py) | `python scripts/paper_figs/fig1_conditional_mass_function.py --target-nupper 0.1 --output pch08_vs_zhanghui_cmf` (script default `--target-nupper` is `0.5`, a cheaper but PCH08-non-compliant compromise -- the paper uses PCH08's own `0.1` design target) |
-| PCH08 vs. Zhang-Hui major-merger redshift | [`scripts/paper_figs/fig3_major_merger_redshift.py`](../scripts/paper_figs/fig3_major_merger_redshift.py) | `python scripts/paper_figs/fig3_major_merger_redshift.py --output pch08_vs_zhanghui_major_merger` (`--target-nupper 0.1` is already this script's default) |
+| PCH08 vs. Zhang-Hui conditional mass function | [`scripts/paper_figs/fig1_conditional_mass_function.py`](../scripts/paper_figs/fig1_conditional_mass_function.py) | `python scripts/paper_figs/fig1_conditional_mass_function.py --n-trees 1000 --dz 0.05 --dz-zh 0.0005 --dz-zh-overlay 0.05 0.002 --target-nupper 0.1 --output pch08_vs_zhanghui_cmf` (PCH08 uses adaptive `N_upper`-compliant steps; Zhang-Hui uses a fixed step, solid, with coarser steps thin; script default `--target-nupper` is `0.5`, a cheaper but PCH08-non-compliant compromise -- the paper uses PCH08's own `0.1` design target) |
+| PCH08 vs. Zhang-Hui major-merger redshift | [`scripts/paper_figs/fig3_major_merger_redshift.py`](../scripts/paper_figs/fig3_major_merger_redshift.py) | `python scripts/paper_figs/fig3_major_merger_redshift.py --n-trees 5000 --dz 0.05 --dz-zh 0.0005 --dz-zh-overlay 0.05 0.002 --output pch08_vs_zhanghui_major_merger` (`--target-nupper 0.1` is already this script's default) |
 | Constrained vs. unconstrained growth histories | [`scripts/validate_constrained_tree_convergence.py`](../scripts/validate_constrained_tree_convergence.py) | `python scripts/validate_constrained_tree_convergence.py --n-trees 3000 --output-figure constrained_vs_unconstrained` (script default `--n-trees` is `150`; the paper uses the sample-size-convergence-checked `3000`, see the script's own docstring for why) |
+| Matched-timestep cost table | [`scripts/benchmark_matched_dz.py`](../scripts/benchmark_matched_dz.py) | `python scripts/benchmark_matched_dz.py --n 10000 --repeats 3 --csv benchmark_matched_dz.csv` |
+| Timestep compliance table | [`scripts/timestep_compliance_table.py`](../scripts/timestep_compliance_table.py) | `python scripts/timestep_compliance_table.py --n 3000` (numba forests are not bitwise seed-reproducible; medians vary by about 0.01) |
+| Zhang-Hui single-step check against analytic EPS | [`scripts/validate_zh_single_step_vs_eps.py`](../scripts/validate_zh_single_step_vs_eps.py) | `python scripts/validate_zh_single_step_vs_eps.py --n-bins 20 --n-draws 4000000` |
 | Backend wall-time scaling | [`scripts/benchmark_backends.py`](../scripts/benchmark_backends.py) | `python scripts/benchmark_backends.py --repeats 5 --output backend_benchmark --csv backend_benchmark.csv` |
 
 Two scripts under `scripts/paper_figs/` are *not* used by the current
@@ -54,17 +57,7 @@ convergence study, not arbitrary choices).
 
 ## A note on numbers that move
 
-Several of the figures above compare `foraois`'s two tree-generation
-backends (PCH08 vs. the barrier-agnostic Zhang-Hui solver), and the
-headline comparison number has changed -- and flipped sign -- several
-times over this package's development, each time from finding and fixing
-a genuine bug (see the paper's own Section 4.4 for the full history, most
-recently a factor-of-2 error in `CosmoData.dlogsigma_dlogmass`, fixed in
-commit `f07d3cf`). This is disclosed there as evidence the validation
-suite is doing its job, not as a reason to distrust the current number --
-but it does mean a number quoted in an older commit's docs, a cached
-figure, or this repository's own `docs/MODELS.md` can go stale faster
-than for a typical numerical result. If a figure or number here looks
-inconsistent with the paper you're reading, re-run the script above
-against the commit the paper cites (Section 9, "Availability") rather
-than assuming either is wrong.
+The PCH08 versus Zhang-Hui comparisons depend on the timestep as well as on the algorithms (see
+[PCH08_HIGH_Z_DIAGNOSTIC.md](PCH08_HIGH_Z_DIAGNOSTIC.md)). If a number here or in an older commit's docs looks inconsistent with
+the paper, re-run the script against the commit or release the paper cites (Section 9, "Availability") rather than assuming either
+is wrong.

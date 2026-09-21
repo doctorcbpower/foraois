@@ -75,6 +75,11 @@ def main():
     parser.add_argument("--config", default="config/planck2018_camb.yml")
     parser.add_argument("--n-trees", type=int, default=5000)
     parser.add_argument("--dz", type=float, default=0.05, help="Do not go far below 0.05 at the default --n-grid for Zhang-Hui; see module docstring")
+    parser.add_argument("--dz-zh", type=float, default=None,
+                        help="fixed Zhang-Hui step (default: --dz). The binary-per-step sampler needs a step small enough that the EPS "
+                             "expected number of splits per step is <<1 (about 5e-4 at M_res/M2=1e-4)")
+    parser.add_argument("--dz-zh-overlay", type=float, nargs="*", default=[],
+                        help="extra ZH steps drawn thin for comparison (e.g. the coarse 0.05 of the earlier version)")
     parser.add_argument("--z-max", type=float, default=4.0)
     parser.add_argument("--n-grid", type=int, default=40)
     parser.add_argument("--s-max-factor", type=float, default=8.0)
@@ -99,11 +104,12 @@ def main():
     parser.add_argument("--replot", default=None, help="redraw from a saved .npz (from a previous run) without recomputing")
     args = parser.parse_args()
     if args.replot:
-        results, bins = load_data(args.replot)
-        plot_figure(results, bins, args.output)
+        results, bins, dz_main, dz_extra = load_data(args.replot)
+        plot_figure(results, bins, args.output, dz_main, dz_extra)
         return
 
-    if args.dz < 0.02 and args.n_grid <= 40:
+    dz_zh = args.dz if args.dz_zh is None else args.dz_zh
+    if dz_zh < 0.02 and args.n_grid <= 40 and False:  # closed-form flat-barrier path ignores n_grid
         print(
             f"WARNING: --dz={args.dz} with --n-grid={args.n_grid} will badly under-resolve the Zhang-Hui "
             "first-crossing solve at small steps -- results may be both much slower AND numerically "
@@ -123,44 +129,60 @@ def main():
             args.config, M2, Z0, args.z_max, M_res, args.dz, args.f_major, args.n_trees, n_jobs=args.n_jobs, seed0=args.seed + row * 100_000,
             label=f"PCH08 M2={M2:.2e}", target_nupper=target_nupper,
         )
-        zh_raw = run_zh_mainbranch_ensemble(
-            args.config, M2, Z0, args.z_max, M_res, args.dz, args.f_major, args.n_trees,
-            model="cdm", N_grid=args.n_grid, S_max_factor=args.s_max_factor, n_jobs=args.n_jobs, seed0=args.seed + row * 100_000 + 1_000_000,
-            label=f"Zhang-Hui M2={M2:.2e}",
-        )
-        results.append((np.array([z for z in pch_raw if z is not None]), np.array([z for z in zh_raw if z is not None])))
+        def _zh(dz_use, off):
+            raw = run_zh_mainbranch_ensemble(
+                args.config, M2, Z0, args.z_max, M_res, dz_use, args.f_major, args.n_trees,
+                model="cdm", N_grid=args.n_grid, S_max_factor=args.s_max_factor, n_jobs=args.n_jobs,
+                seed0=args.seed + row * 100_000 + 1_000_000 + off, label=f"Zhang-Hui M2={M2:.2e} dz={dz_use:g}",
+            )
+            return np.array([z for z in raw if z is not None])
+
+        zh_main = _zh(dz_zh, 0)
+        extra = [_zh(d, 10_000 * (i + 1)) for i, d in enumerate(args.dz_zh_overlay)]
+        results.append((np.array([z for z in pch_raw if z is not None]), zh_main, extra))
     from foraois.utils import paper_style as ps
 
-    data = {"M2_values": np.array(M2_VALUES), "bins": bins, "n_trees": np.array(args.n_trees), "args": np.array(str(vars(args)))}
-    for row, (pz, zz) in enumerate(results):
+    data = {"M2_values": np.array(M2_VALUES), "bins": bins, "n_trees": np.array(args.n_trees), "args": np.array(str(vars(args))),
+            "dz_zh": np.array(dz_zh), "dz_zh_extra": np.array(list(args.dz_zh_overlay))}
+    for row, (pz, zz, ex) in enumerate(results):
         data[f"pch_z_{row}"], data[f"zh_z_{row}"] = pz, zz
+        for i, e in enumerate(ex):
+            data[f"zhx{i}_z_{row}"] = e
     np.savez(str(ps.stem_of(args.output)) + ".npz", **data)
-    plot_figure(results, bins, args.output)
+    plot_figure(results, bins, args.output, dz_zh, list(args.dz_zh_overlay))
 
 
-def plot_figure(results, bins, output):
-    """Single-column (3.4 in) SciencePlots figure: one panel per halo mass."""
+def plot_figure(results, bins, output, dz_main=None, dz_extra=()):
+    """Single-column (3.4 in) SciencePlots figure: one panel per halo mass. Coarser ZH steps are drawn thin and dashed."""
     import matplotlib.pyplot as plt
     from foraois.utils import paper_style as ps
 
     ps.apply()
     fig, axes = plt.subplots(len(M2_VALUES), 1, figsize=(ps.COL, 5.4), sharex=True)
-    for ax, M2, (pz, zz) in zip(axes, M2_VALUES, results):
+    for ax, M2, (pz, zz, ex) in zip(axes, M2_VALUES, results):
         if len(pz):
             ax.hist(np.log10(1.0 + pz), bins=bins, histtype="step", density=True, color=ps.BLUE, lw=1.3, label="PCH08")
+        for dz_e, e in zip(dz_extra, ex):
+            if len(e):
+                ax.hist(np.log10(1.0 + e), bins=bins, histtype="step", density=True, color=ps.RED, lw=0.7, ls="--", alpha=0.7,
+                        label=rf"Zhang--Hui, $\Delta z={dz_e:g}$")
         if len(zz):
-            ax.hist(np.log10(1.0 + zz), bins=bins, histtype="step", density=True, color=ps.RED, lw=1.3, label="Zhang--Hui")
+            ax.hist(np.log10(1.0 + zz), bins=bins, histtype="step", density=True, color=ps.RED, lw=1.3,
+                    label="Zhang--Hui" if dz_main is None else rf"Zhang--Hui, $\Delta z={dz_main:g}$")
         ax.set_title(ps.m2_label(M2))
         ax.set_ylabel(r"$dn/d\log_{10}(1+z)$")
     axes[-1].set_xlabel(r"$\log_{10}(1+z)$")
-    axes[0].legend(frameon=False)
+    axes[0].legend(frameon=False, fontsize=5.5, loc="upper right")
     fig.tight_layout()
     ps.save(fig, output)
 
 
 def load_data(path):
     d = np.load(path)
-    return [(d[f"pch_z_{r}"], d[f"zh_z_{r}"]) for r in range(len(M2_VALUES))], d["bins"]
+    dz_main = float(d["dz_zh"]) if "dz_zh" in d.files else None
+    dz_extra = [float(x) for x in d["dz_zh_extra"]] if "dz_zh_extra" in d.files else []
+    res = [(d[f"pch_z_{r}"], d[f"zh_z_{r}"], [d[f"zhx{i}_z_{r}"] for i in range(len(dz_extra))]) for r in range(len(M2_VALUES))]
+    return res, d["bins"], dz_main, dz_extra
 
 
 if __name__ == "__main__":

@@ -10,9 +10,10 @@ halo growth histories, with two interchangeable algorithms:
 
 - **`PCHMergerTree`** -- Parkinson, Cole & Helly (2008)'s fitted branching-rate
   approach, with three interchangeable performance backends (`serial`/`numpy`/`numba`).
-- **`ZhangHuiMergerTree`** -- builds trees directly from the *exact* Zhang &
-  Hui (2006) first-crossing distribution rather than a fitted rate, so it's
-  barrier-agnostic by construction. Includes a working implementation of
+- **`ZhangHuiMergerTree`** -- builds binary-per-step trees from the Zhang &
+  Hui (2006) first-crossing distribution rather than a fitted rate. The
+  first-crossing solver accepts a general barrier; the tree builders currently
+  use constant barriers. Includes a working implementation of
   Nadler, Benson, Driskell, Du & Gluscevic (2023)'s Brownian-bridge-constrained
   excursions: merger trees guaranteed to reach a specified progenitor mass at
   a specified redshift, useful for cheaply sampling rare/outlier growth
@@ -74,7 +75,7 @@ tree = tree_generator.build_tree(M0=1e12, z0=0.0, z_max=5.0, M_res=1e9, dz=0.002
 
 (`dz` this small keeps `Nupper` -- the expected splits per step, see `foraois.diagnostics.expected_splits_per_step` -- comfortably below 1 for this mass ratio; PCH08's own single-split-per-step architecture assumes `Nupper` stays small, and a coarser `dz` here would silently violate that.)
 
-**The exact Zhang-Hui algorithm** -- same tree-of-dicts shape as `build_tree` above, any collapse barrier:
+**The Zhang-Hui algorithm** -- same tree-of-dicts shape as `build_tree` above (binary-per-step approximation; constant barriers in the vectorised builders):
 
 ```python
 from foraois import ZhangHuiMergerTree
