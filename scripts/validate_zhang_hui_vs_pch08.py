@@ -88,7 +88,7 @@ def run_comparison(
 
             warnings.warn(
                 f"max Nupper={max_nupper:.3f} at dz={dz} for this (M0, M_res, z_max) -- "
-                "PCH08's own design target is <<1 (~0.1); the PCH08-vs-Zhang-Hui comparison "
+                "the practical single-split criterion is Nupper <~ 0.1; the PCH08-vs-Zhang-Hui comparison "
                 "below may not be trustworthy at this dz. Reduce --dz (or, for a different "
                 "M0/M_res/z_max choice, re-check with foraois.diagnostics.expected_splits_per_step "
                 "before trusting the result).",
