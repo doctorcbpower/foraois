@@ -678,7 +678,7 @@ class CosmoData:
     # NEW: optimised sigma grid with scipy interpolant
     # ------------------------------------------------------------------
 
-    def _prepare_sigma_grid(self, pk_data, logmass_min=5.0, logmass_max=16.0, dlogmass=0.01):
+    def _prepare_sigma_grid(self, pk_data, logmass_min=2.0, logmass_max=16.0, dlogmass=0.01):
         """
         Precompute and cache sigma(M) and d log sigma / d log M on a uniform
         log-mass grid, then build fast ``scipy`` interpolants.
@@ -693,6 +693,26 @@ class CosmoData:
           any Python-level looping.
         * Raw arrays (``_logmass``, ``_sigma``, ``_dlogsigma_dlogmass``) are
           still stored for backward compatibility.
+
+        ``logmass_min`` default (v0.1.2 audit fix)
+        --------------------------------------------
+        Was ``5.0`` (1e5 Msun/h) through v0.1.1. The compiled (numba) tree
+        kernels read ``_logmass``/``_sigma``/``_dlogsigma_dlogmass`` directly
+        via a clamping lookup (``_interp_sorted``/``_interp_sorted_zh``),
+        whereas ``sigma_at_logmass``/``dlogsigma_at_logmass`` below
+        extrapolate (``fill_value="extrapolate"``) -- so a compiled build
+        with ``M_res`` below the table silently used the *clamped* value of
+        sigma(M_res) (effectively sigma(1e5 Msun/h)) rather than the true,
+        lower value, corrupting every branching-rate quantity that depends
+        on it. See ``check_M_res`` below, called by every tree-building
+        entry point, for the guard this enables: it raises rather than
+        silently clamping when a compiled build requests a resolution the
+        table (or, independently, ``pk_kmax``) does not support.
+        ``logmass_min=2.0`` (100 Msun/h) was chosen to comfortably cover the
+        smallest ``M_res`` validated by the audit (1e3 Msun/h; PCH's
+        internal 0.5*M_res sub-lookup needs the table down to 5e2, ZH's own
+        lookup needs 1e3 -- both well inside 1e2). It is not validated, and
+        ``check_M_res`` will raise, below the table's own edge.
         """
         logmass = np.arange(logmass_min, logmass_max, dlogmass)
         radii = self.get_radius(10**logmass)
@@ -724,6 +744,145 @@ class CosmoData:
         # reversing both arrays gives sigma in ascending order, as interp1d
         # requires of its x-values.
         self._logmass_interp_inv = interpolate.interp1d(sigma[::-1], logmass[::-1], **_kw)
+
+    # ------------------------------------------------------------------
+    # Numerical-validity guard for a chosen tree mass resolution (v0.1.2)
+    # ------------------------------------------------------------------
+
+    def check_M_res(self, M_res, lookup_factor=1.0, compiled=True):
+        """
+        Validate a tree mass resolution ``M_res`` [Msun/h] against this
+        cosmology's sigma(M) table and ``pk_kmax``, called by every public
+        tree-building entry point in ``pch_trees.py``/``zhang_hui_trees.py``
+        before it starts growing trees. Two independent checks, addressing
+        two independent limitations (audit, 2026-09; see
+        ``docs/PCH08_HIGH_Z_DIAGNOSTIC.md`` for the analogous timestep
+        criterion, which this follows in spirit):
+
+        1. **Table coverage (raises).** ``_prepare_sigma_grid`` builds
+           ``_logmass``/``_sigma``/``_dlogsigma_dlogmass`` down to
+           ``logmass_min``. The compiled (numba) kernels read these arrays
+           through a *clamping* lookup and would otherwise silently reuse
+           sigma(M_table_min) for any smaller mass (v0.1.1's bug: an
+           effective, undocumented resolution floor of 1e5 Msun/h
+           regardless of the requested ``M_res``). This raises instead,
+           for *every* path (compiled or not -- the scipy interpolants
+           extrapolate rather than clamp below the table, which was never
+           validated either; see ``_prepare_sigma_grid``'s docstring).
+           ``lookup_factor`` is the smallest fraction of ``M_res`` the
+           calling algorithm's kernel actually looks sigma up at: PCH08
+           evaluates sigma at the half-mass point of a halo whose mass has
+           just fallen to ``M_res`` (i.e. sigma(0.5*M_res)) as part of its
+           branching-rate envelope (``_nupper_scalar_kernel``,
+           ``_draw_progenitors_scalar``), so ``lookup_factor=0.5``; the
+           Zhang-Hui kernel's smallest lookup is sigma(M_res) itself
+           (``sigma_res``/``sigma_avail`` in ``_grow_forest_*flat*``), so
+           ``lookup_factor=1.0`` (the default, also correct for any path
+           whose smallest lookup is unknown/at M_res itself).
+
+        2. **pk_kmax truncation (warns).** sigma(M) and
+           |dln(sigma)/dln(M)| are integrals of P(k) truncated at
+           ``pk_kmax``; below a mass set by ``pk_kmax`` this truncation
+           itself (not a lookup bug) makes both quantities too small,
+           independent of the compiled/scipy distinction above. Calibrated
+           against a k_max=3e4 reference (Planck 2018 CDM, top-hat
+           window), the pointwise-accuracy boundary sits at
+           ``pk_kmax * R(M) ~ C`` for both sigma and alpha, with C = 4.0
+           (1% accuracy), 3.7 (3%) and 3.4 (5%), each stable to within a
+           few per cent across pk_kmax = 300-3000 (audit script
+           ``k1_reference.py``/``k3_criteria.py``; docs/MODELS.md's
+           "Numerical validity" table gives the corresponding M_min(pk_kmax)
+           directly). **The warning below fires at the 1% boundary
+           (C=4.1, a small margin above the calibration).** It means
+           exactly that: 1% pointwise accuracy in sigma(M)/alpha(M) has
+           not been established at this M_res for this pk_kmax --
+           *not* that the calculation is invalid. A calculation that only
+           needs 3% or 5% accuracy (most tree-level statistics do not need
+           percent-level sigma/alpha accuracy at every mass in the
+           population) may already be adequate; the warning message gives
+           the 3%/5% thresholds explicitly so this can be judged rather
+           than assumed. This is a practical, geometric criterion, not an
+           exact validity boundary -- the true error depends weakly on
+           cosmology and is smaller, not larger, for thermal-relic WDM and
+           standard (top-hat) FDM, whose transfer functions suppress
+           P(k) at the k this criterion probes; applying the CDM-derived
+           thresholds to them would be spuriously conservative, so this
+           check is skipped for ``dm_model in {"wdm", "fdm"}`` with a
+           top-hat window. It is also skipped for the sharp-k window,
+           where alpha is already forced to exactly 0 below
+           ``M(k0=pk_kmax)`` by a separate, already-documented mechanism
+           (``docs/MODELS.md``'s collapse-barrier section) rather than
+           silently degrading. Tree-level statistics (as opposed to
+           sigma/alpha alone) were found to need noticeably more margin
+           above even the 1% pointwise criterion for some configurations
+           (a z0=5-anchored history to z_max=25 needed pk_kmax=3000, not
+           the ~1500 the 1% criterion alone would suggest, for
+           M_res=1e4 Msun/h) -- this warning is a necessary, not
+           sufficient, check in either direction: passing it does not by
+           itself demonstrate tree-level convergence, and failing it does
+           not by itself demonstrate the calculation is unusable. See the
+           audit report for the tree-level tables and check your own
+           statistic of interest against a larger ``pk_kmax`` if precision
+           matters.
+
+        Parameters
+        ----------
+        M_res : float
+            Mass resolution, Msun/h.
+        lookup_factor : float
+            Smallest fraction of M_res the caller's kernel evaluates sigma
+            at (see point 1); 1.0 (default) is the conservative/generic
+            choice.
+        compiled : bool
+            Whether the caller is a compiled (numba) kernel. Table-coverage
+            failures are real either way (point 1 above), but only a
+            compiled kernel's *own* lookup uses ``lookup_factor`` -- a
+            non-compiled caller is checked at ``M_res`` itself
+            (``lookup_factor`` is ignored when ``compiled=False``).
+
+        Raises
+        ------
+        ValueError
+            If the sigma(M) table does not reach the smallest mass this
+            call would look sigma up at.
+        """
+        table_min = 10 ** self._logmass[0]
+        probe = M_res * (lookup_factor if compiled else 1.0)
+        if probe < table_min:
+            raise ValueError(
+                f"M_res={M_res:.4g} Msun/h needs sigma(M) at {probe:.4g} Msun/h"
+                + (f" (={lookup_factor:g}*M_res, this kernel's own smallest lookup)" if compiled else "")
+                + f", below this CosmoData's tabulated range (table starts at {table_min:.4g} Msun/h -- "
+                "built by _prepare_sigma_grid(logmass_min=...) at construction, from CosmoData.__init__/"
+                "PCHMergerTree.__init__/ZhangHuiMergerTree.__init__). Nothing below the table has been validated: "
+                "extending logmass_min lower is untested, not merely inconvenient. Use a larger M_res, or extend "
+                "and independently validate the table before using a smaller one."
+            )
+        dm_model = str(self.run_params.get("dm_model", "cdm")).lower()
+        wft = getattr(self, "window_function_type", "top_hat")
+        if wft == "sharp_k" or dm_model in ("wdm", "fdm"):
+            return
+        kmax = float(self.run_params["pk_kmax"])
+        R = float(self.get_radius(M_res))
+        kR = kmax * R
+        if kR < 4.1:
+            import warnings
+
+            kmax_1pct, kmax_3pct, kmax_5pct = 4.0 / R, 3.7 / R, 3.4 / R
+            warnings.warn(
+                f"pk_kmax={kmax:g} h/Mpc gives pk_kmax*R(M_res)={kR:.2f} at M_res={M_res:.4g} Msun/h: "
+                "1% pointwise accuracy in sigma(M) and |dln(sigma)/dln(M)| has NOT been established here "
+                "(this does not by itself mean the calculation is invalid -- see below). Calibrated thresholds "
+                f"(Planck 2018 CDM, top-hat): pk_kmax >~ {kmax_1pct:.0f} h/Mpc for 1% accuracy at this mass, "
+                f">~ {kmax_3pct:.0f} for 3%, >~ {kmax_5pct:.0f} for 5% -- compare your own pk_kmax against "
+                "whichever of these your calculation actually needs; many tree-level statistics do not need "
+                "percent-level sigma/alpha accuracy at every mass. Tree-level statistics can need more margin "
+                "than even the 1% threshold for some configurations (check_M_res's own docstring; the audit "
+                "report's tree-level tables). This pointwise criterion is necessary but not sufficient in "
+                "either direction: passing it does not by itself demonstrate tree-level convergence.",
+                UserWarning,
+                stacklevel=3,
+            )
 
     def sigma_at_logmass(self, logmass):
         """

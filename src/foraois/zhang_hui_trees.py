@@ -1072,6 +1072,7 @@ class ZhangHuiMergerTree:
         change for this.
         """
         self._ensure_delta_col_covers(z_max)
+        self.cosmo_data.check_M_res(M_res, compiled=False)
 
         tree = []
         M_cur = M0
@@ -1138,6 +1139,7 @@ class ZhangHuiMergerTree:
         resolved" bookkeeping).
         """
         self._ensure_delta_col_covers(z_max)
+        self.cosmo_data.check_M_res(M_res, compiled=False)
         _assert_flat_barrier(self.model, z_max, self.cosmo_data)
 
         M0_array = np.asarray(M0_array, dtype=np.float64)
@@ -1204,6 +1206,7 @@ class ZhangHuiMergerTree:
                 "algorithm, no numba needed."
             )
         self._ensure_delta_col_covers(z_max)
+        self.cosmo_data.check_M_res(M_res, lookup_factor=1.0, compiled=True)
         _assert_flat_barrier(self.model, z_max, self.cosmo_data)
 
         M0_array = np.asarray(M0_array, dtype=np.float64)
@@ -1276,6 +1279,7 @@ class ZhangHuiMergerTree:
                 "instead (same closed-form algorithm, pure Python, no numba needed)."
             )
         self._ensure_delta_col_covers(z_max)
+        self.cosmo_data.check_M_res(M_res, lookup_factor=1.0, compiled=True)
         _assert_flat_barrier(self.model, z_max, self.cosmo_data)
 
         z_steps = np.arange(z0, z_max + dz * 0.5, dz)

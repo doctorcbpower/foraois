@@ -1304,6 +1304,7 @@ class PCHMergerTree:
         large N.
         """
         self._ensure_delta_col_covers(z_max)
+        self.cosmo_data.check_M_res(M_res, compiled=False)
 
         tree = []
         current_z = z0
@@ -1389,6 +1390,7 @@ class PCHMergerTree:
                 the other build_* methods track.
         """
         self._ensure_delta_col_covers(z_max)
+        self.cosmo_data.check_M_res(M_res, compiled=False)
 
         z_steps = np.arange(z0, z_max + dz * 0.5, dz)
         n_steps = len(z_steps)
@@ -1537,6 +1539,7 @@ class PCHMergerTree:
             ``smooth_accretion`` above.
         """
         self._ensure_delta_col_covers(z_max)
+        self.cosmo_data.check_M_res(M_res, compiled=False)
 
         M0_array = np.asarray(M0_array, dtype=np.float64)
         z_steps = np.arange(z0, z_max + dz * 0.5, dz)
@@ -1624,6 +1627,7 @@ class PCHMergerTree:
                 "API and return shape, no numba needed."
             )
         self._ensure_delta_col_covers(z_max)
+        self.cosmo_data.check_M_res(M_res, lookup_factor=0.5, compiled=True)
 
         M0_array = np.asarray(M0_array, dtype=np.float64)
         z_steps = np.arange(z0, z_max + dz * 0.5, dz)
@@ -1739,6 +1743,7 @@ class PCHMergerTree:
                 "instead (same algorithm, pure Python, no numba needed)."
             )
         self._ensure_delta_col_covers(z_max)
+        self.cosmo_data.check_M_res(M_res, lookup_factor=0.5, compiled=True)
 
         M0_array = np.full(int(n_trees), float(M0), dtype=np.float64)
         checkpoints_arr = np.asarray(sorted(set(checkpoints)), dtype=np.float64)
@@ -1850,6 +1855,7 @@ class PCHMergerTree:
                 "most_recent_major_merger_z instead (same algorithm, pure Python, no numba needed)."
             )
         self._ensure_delta_col_covers(z_max)
+        self.cosmo_data.check_M_res(M_res, lookup_factor=0.5, compiled=True)
 
         M0_array = np.full(int(n_trees), float(M0), dtype=np.float64)
 

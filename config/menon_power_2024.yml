@@ -1,7 +1,19 @@
 Run:
   mode: camb
   pk_kmin: 1.e-4
-  pk_kmax: 1.e2
+  # pk_kmax: was 1e2 through v0.1.1. This is a paper-specific production config, not a
+  # general-purpose one: every one of its consumers in Ashvini (gen_mvm_production.py and
+  # all ten scripts/paper_figures/gen_*.py / control_*.py / paired_*.py scripts, checked
+  # 2026-09-22) hard-codes M_res=1e4 Msun -- there is no lower-resolution use of this
+  # specific file to protect a default of 100 for. Audited (2026-09) sigma(M)/alpha(M)
+  # truncation at pk_kmax=1e2 is >1% for M below ~8e7/3.2e7 Msun/h respectively, badly
+  # wrong at 1e4. 3e3 is the smallest pk_kmax the audit's own tree-level tests (not just
+  # the sigma/alpha pointwise criterion) found to pass cleanly at M_res=1e4 Msun/h for a
+  # z0=5-anchored history to z_max=25 (this config's own use case); see
+  # foraois_sigma_audit/REPORT_kmax.md Sec. 3 (K6a) for the tested grid. Raising this
+  # default costs a few extra seconds of one-time CAMB/sigma-table setup per script run,
+  # negligible against the 240+-tree generation that follows.
+  pk_kmax: 3.e3
   pk_npoints: 2000
   plot_pk: False
   plot_mvar: False
