@@ -34,3 +34,14 @@ Known gaps and open questions, in no particular order.
   backend (`zhang_hui_constrained_trees.py`) doesn't yet have an equivalent
   -- it only tracks the main (running-maximum) branch.
 
+- **`pk_kmax` requirement beyond the two tested tree configurations.**
+  `check_M_res`'s `pk_kmax * R(M_res) < 4.1` warning is calibrated from a
+  Planck 2018 CDM, top-hat sigma(M)/alpha(M) table only (see MODELS.md's
+  "Numerical validity" section); it is not applied to WDM/FDM (assumed less
+  demanding, not separately tree-tested) and the size of the margin
+  tree-level statistics need above this pointwise criterion was checked at
+  only two `(z0, z_max, dz)` configurations. A systematic tree-level
+  `pk_kmax` scan across dark-matter models and tree configurations would
+  let the warning threshold (and `menon_power_2024.yml`'s `pk_kmax=3000`)
+  be tightened or loosened with evidence rather than margin.
+

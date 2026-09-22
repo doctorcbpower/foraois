@@ -55,6 +55,23 @@ P(k) <- P(k) * T(k)^2
 
 Mass-radius relation: `R(M) = (3M / 4*pi*rho_bar)^(1/3)`, `rho_bar = OmegaM * rhocrit0`, `rhocrit0 = 2.775e11 Msun/Mpc^3/h^2`.
 
+### Numerical validity of sigma(M) and alpha(M) at low mass
+
+`sigma(M)` and `alpha(M) = |dln(sigma)/dln(M)|` are looked up two ways: `sigma_at_logmass`/`dlogsigma_at_logmass` (scipy interpolants, extrapolate outside their tabulated range) and, inside the compiled (numba) tree kernels, a direct clamping lookup on the raw `_logmass`/`_sigma`/`_dlogsigma_dlogmass` arrays built by `_prepare_sigma_grid` (default range `10^2`-`10^16` Msun/h). Through v0.1.1 that table started at `10^5` Msun/h, and the two lookups disagreed below it -- the compiled kernels silently reused `sigma(10^5)` for any smaller mass, an undocumented, unintended resolution floor independent of the `M_res` actually requested. **v0.1.2 fixes this**: the table now starts at `10^2` Msun/h, and every public tree-building method calls `CosmoData.check_M_res(M_res, ...)` first, which **raises** `ValueError` if a build would still look sigma up below the table (rather than silently clamping or extrapolating arbitrarily far below a range that was never validated).
+
+Independent of that fix, `sigma(M)`/`alpha(M)` are integrals of `P(k)` truncated at `pk_kmax`, and are systematically too small below a mass set by `pk_kmax`. Calibrated for a Planck 2018 CDM cosmology (top-hat window) against a `k_max=3e4` reference:
+
+| `pk_kmax` [h/Mpc] | M for which sigma, alpha are accurate to 1% | to 3% | to 5% |
+| ---: | ---: | ---: | ---: |
+| 100  | `>= 8e7` | `>= 2.0e7` | `>= 1.6e7` |
+| 300  | `>= 8.9e5` | `>= 7.1e5` | `>= 5.6e5` |
+| 1000 | `>= 2.2e4` | `>= 1.8e4` | `>= 1.4e4` |
+| 3000 | `>= 8e2`   | `>= 6.3e2` | `>= 5.6e2` |
+
+`alpha`, not `sigma`, sets these limits (by a factor of ~8-13); both scale as `M_min ~ (pk_kmax/1000)^-3.0`, consistent with the geometric expectation `pk_kmax * R(M) ~ const`, with `pk_kmax * R(M_min) ~ 4.0` (1%), `3.7` (3%), `3.4` (5%). `check_M_res` **warns** (not raises -- this degrades gracefully rather than returning nonsense) when `pk_kmax * R(M_res) < 4.1`, i.e. when 1% pointwise accuracy has not been established -- **this is not a claim that the calculation is invalid**: many tree-level statistics do not need 1% sigma/alpha accuracy at every mass, and the warning message states the pk_kmax needed for 3%/5% too, so the 1%-boundary trigger is a conservative default rather than the only threshold that matters. It is a practical criterion in the same spirit as the `N_upper ~ 0.1` timestep criterion below, not an exact validity boundary; it is skipped for thermal-relic WDM and standard (top-hat) FDM, whose transfer functions suppress `P(k)` at the relevant `k` (making the CDM threshold spuriously conservative there), and for the sharp-k window, whose `alpha` is already forced to exactly 0 below `M(k0=pk_kmax)` by the closed form above.
+
+**Tree-level statistics can need more margin than this pointwise sigma/alpha criterion alone.** A `z0=5`-anchored history integrated to `z_max=25` (`menon_power_2024.yml`'s own use case, Ashvini's production configuration) needed `pk_kmax=3000`, not the ~1500 the table above would suggest, to pass a full battery of tree statistics (median main-progenitor mass, formation redshift, resolved fraction, merger count, each at 1% or better) at `M_res=10^4` Msun/h; a `z0=0` grid to `z_max=20` at the same `M_res` was already adequate at `pk_kmax=1000`. The dependence on the specific `(z0, z_max, dz)` configuration was not characterised beyond these two cases. `menon_power_2024.yml` ships with `pk_kmax=3000` for this reason; the other shipped configs (`pk_kmax=100`, used at `M_res >= 10^9` throughout the README/tests/quick-start) are unaffected and unchanged. See the audit (`foraois_sigma_audit/REPORT.md`, `REPORT_kmax.md` in the maintainer's records) for the full tree-level tables and the derivation above.
+
 ## Transfer functions ([`transfer_functions.py`](../src/foraois/transfer_functions.py))
 
 Selected by `Run.dm_model`, applied inside `get_power_spectrum()` as `P(k) *= T(k)^2`.
@@ -207,7 +224,7 @@ A run is configured by a YAML file with top-level `Run`, `Cosmology`, and a sect
 | `mode` | -- (required) | `class` / `camb` / `user` (Boltzmann backend; `user` supplies your own tabulated P(k), no extra dependency) |
 | `dm_model` | `cdm` | `cdm` / `wdm` / `fdm` |
 | `dm_model_mass` | `None` | Required for `wdm` (keV) / `fdm` (1e-22 eV units) |
-| `pk_kmin`, `pk_kmax` | 1e-4, 1e2 | Power spectrum k-range, h/Mpc |
+| `pk_kmin`, `pk_kmax` | 1e-4, 1e2 | Power spectrum k-range, h/Mpc -- `pk_kmax` sets how far down in mass `sigma(M)`/`alpha(M)` are accurate; see "Numerical validity of sigma(M) and alpha(M) at low mass" above before using `M_res` below ~1e7 Msun/h |
 | `pk_npoints` | 1000 | Number of log-k grid points |
 | `plot_pk`, `plot_mvar` | False | Generate P(k) / sigma(M) diagnostic plots |
 | `pk_file_name`, `mvar_file_name` | -- | Output plot filenames |

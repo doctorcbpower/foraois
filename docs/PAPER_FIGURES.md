@@ -21,7 +21,7 @@ width for the DM-model comparison and the conditional mass function.
 | Paper figure | Script | Command used for the paper |
 |---|---|---|
 | Merger tree dendrogram | [`scripts/make_tree_dendrogram_figure.py`](../scripts/make_tree_dendrogram_figure.py) | `python scripts/make_tree_dendrogram_figure.py --output tree_dendrogram` (fixed `--seed 42`) |
-| CDM/WDM/FDM power spectrum & mass variance comparison | [`scripts/make_dm_model_comparison_figure.py`](../scripts/make_dm_model_comparison_figure.py) | `python scripts/make_dm_model_comparison_figure.py --output dm_model_comparison` |
+| CDM/WDM/FDM power spectrum & mass variance comparison | [`scripts/make_dm_model_comparison_figure.py`](../scripts/make_dm_model_comparison_figure.py) | `python scripts/make_dm_model_comparison_figure.py --pk-kmax 1000 --output dm_model_comparison` (`--pk-kmax 1000`, added in v0.1.2: the shipped configs' own `pk_kmax=100` is only accurate to 1% above ~8e7 Msun/h, while the mass grid plotted starts at 1e6; see docs/MODELS.md's "Numerical validity" section) |
 | Smooth accretion vs. discrete mergers | [`scripts/make_accretion_decomposition_figure.py`](../scripts/make_accretion_decomposition_figure.py) | `python scripts/make_accretion_decomposition_figure.py --output smooth_vs_merger` |
 | PCH08 branching-rate sampling validation | [`scripts/make_validation_figure.py`](../scripts/make_validation_figure.py) | `python scripts/make_validation_figure.py --output branching_rate_validation` |
 | PCH08 vs. Zhang-Hui surviving-mass comparison | [`scripts/validate_zhang_hui_vs_pch08.py`](../scripts/validate_zhang_hui_vs_pch08.py) | `python scripts/validate_zhang_hui_vs_pch08.py --output-figure pch08_vs_zhanghui` (defaults: `dz=0.005`, `n_trees=20000`) |
