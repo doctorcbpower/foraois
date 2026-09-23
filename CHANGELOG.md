@@ -52,6 +52,32 @@ Numerical-validity fix and audit (2026-09), no algorithmic changes.
   existing documented uses (`M_res >~ 1e8`-`1e9 Msun/h` throughout the README, quick
   start and test suite) were already unaffected by either fix.
 
+### Audited, no source change (alpha(M) sign convention)
+
+A downstream project (`Stochastic_Occupation`) reconciling its own tree layer against this
+release's `check_M_res`/table fix built its own `alpha(M)` table by passing
+`CosmoData._dlogsigma_dlogmass` -- the raw, signed `d ln(sigma)/d ln M` -- directly into
+`foraois`'s compiled PCH08 kernels, instead of going through `PCHMergerTree.alpha_grid`'s
+`np.abs(...)`. Symptom there: every tested seed produced a single unbranched lineage.
+
+Audited whether `foraois` itself has the same sign error. It does not: `PCHMergerTree.__init__`
+already builds `self.alpha_grid = np.abs(self.dlogsigma_grid)`, and every compiled-kernel call
+site (`build_forest_numba`, `grow_full_population_numba_adaptive`,
+`major_merger_redshifts_numba_adaptive`) passes only `alpha_grid`, never the signed
+`dlogsigma_grid`. The non-compiled reference path (`branching_rate_terms`, used by
+`draw_progenitor_masses` and `diagnostics`) reads `CosmoData.dlogsigma_at_logmass`, whose
+interpolant is built from `np.abs(...)` and is therefore already positive by construction.
+`ZhangHuiMergerTree` does not consume `alpha(M)` at all. No `foraois` source file changed; no
+version bump. `_dlogsigma_dlogmass`/`dlogsigma_dlogmass()` are confirmed, not changed, to be the
+correct general-purpose signed API (`mass_function_utils.py`'s own consumer relies on that sign).
+
+What changed: only test coverage. The top-hat branch of `dlogsigma_dlogmass` had no direct sign
+test (only the sharp-k branch did); `tests/test_cosmo_utils.py` and `tests/test_pch_validation.py`
+gained four tests closing that gap, including one that reproduces the downstream failure mode
+directly through `branching_rate_terms`'s `Nupper` (a negative, and therefore unphysical and
+never-accepted, expected split count) rather than merely checking that `abs()` was called
+somewhere.
+
 ### Notes for anyone who generated trees with v0.1.1 at `M_res < 1e5 Msun/h`
 
 Results from `build_forest_numba`, `grow_full_population_numba_adaptive`,

@@ -214,6 +214,44 @@ def test_dlogsigma_dlogmass_sharp_k_zero_beyond_pk_kmax(cosmo_data, synthetic_pk
     assert result == pytest.approx(0.0, abs=1e-10)
 
 
+# ---------------------------------------------------------------------------
+# Sign convention of d ln(sigma) / d ln M (2026-09 audit, triggered by a
+# downstream project bypassing PCHMergerTree.alpha_grid's np.abs() and
+# passing CosmoData._dlogsigma_dlogmass's raw signed value straight into a
+# PCH08 kernel -- see test_pch_validation.py's
+# test_branching_rate_collapses_if_signed_alpha_used_instead_of_positive for
+# the branching-rate-level consequence). No foraois code changed as a result
+# of this audit: the top-hat branch already had no dedicated sign test
+# (only sharp_k did, above), so this closes that gap rather than fixing a
+# bug.
+# ---------------------------------------------------------------------------
+
+
+def test_dlogsigma_dlogmass_top_hat_is_negative(cosmo_data, synthetic_pk_data):
+    # sigma(M) decreases monotonically with M (test_sigma_decreases_with_mass,
+    # this module) -- its logarithmic derivative must therefore be negative.
+    # dlogsigma_dlogmass's own docstring states this ("Negative, since sigma
+    # decreases with mass; PCHMergerTree's alpha_grid takes abs() of this")
+    # but, unlike the sharp_k branch, that claim was not previously checked
+    # by a test for the top-hat/gaussian branch actually used by CDM runs.
+    for mass in (1e9, 1e11, 1e13):
+        result = cosmo_data.dlogsigma_dlogmass(synthetic_pk_data, mass=mass, window_function_type="top_hat")
+        assert result < 0.0
+
+
+def test_dlogsigma_at_logmass_is_the_positive_magnitude_of_dlogsigma_dlogmass(cosmo_data, synthetic_pk_data):
+    # dlogsigma_at_logmass (the fast interpolated lookup PCHMergerTree's
+    # non-compiled reference path, branching_rate_terms, and
+    # ZhangHuiMergerTree consume) must equal |dlogsigma_dlogmass(...)| --
+    # the two must not silently disagree in sign or magnitude.
+    cosmo_data._prepare_sigma_grid(synthetic_pk_data)
+    for mass in (1e9, 1e11, 1e13):
+        signed = cosmo_data.dlogsigma_dlogmass(synthetic_pk_data, mass=mass, window_function_type="top_hat")
+        positive = float(cosmo_data.dlogsigma_at_logmass(np.log10(mass)))
+        assert positive > 0.0
+        assert positive == pytest.approx(abs(signed), rel=1e-6)
+
+
 def test_window_function_type_config_wiring():
     # config/planck2018_fdm_sharpk.yml sets window_function_type: sharp_k
     # and sharp_k_alpha: 2.5 in the Run section -- check io.get_params()

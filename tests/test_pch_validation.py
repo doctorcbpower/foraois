@@ -191,6 +191,63 @@ def test_sampling_consistency_rejects_nupper_above_one(tree_generator):
         )
 
 
+# ---------------------------------------------------------------------------
+# alpha(M) sign convention (2026-09 audit)
+#
+# Triggered by a downstream project (Stochastic_Occupation) that built its
+# own alpha(M) table by passing CosmoData._dlogsigma_dlogmass -- the raw,
+# signed d ln(sigma)/d ln M -- directly into foraois's compiled PCH08
+# kernels, instead of going through PCHMergerTree.alpha_grid's np.abs().
+# Symptom: every tested seed produced a single unbranched lineage (zero
+# splits). Audit conclusion: foraois's own code is correct throughout --
+# PCHMergerTree.__init__ already builds self.alpha_grid = np.abs(...) and
+# passes only alpha_grid (never the signed dlogsigma_grid) to every compiled
+# kernel call site; the reference (non-compiled) path branching_rate_terms
+# uses cosmo_data.dlogsigma_at_logmass, which is already positive by
+# construction (CosmoData._dlogsigma_interp is built from np.abs(...)). No
+# foraois source file changed. These tests close the gap that let the
+# downstream bug go undetected: nothing previously asserted the sign
+# convention at this boundary directly.
+# ---------------------------------------------------------------------------
+
+
+def test_alpha_grid_is_positive_and_equals_abs_of_signed_derivative(tree_generator):
+    cosmo_data = tree_generator.cosmo_data
+    assert np.all(tree_generator.alpha_grid > 0.0)
+    assert np.allclose(tree_generator.alpha_grid, np.abs(cosmo_data._dlogsigma_dlogmass))
+    # and the raw array it was built from is indeed signed (negative), not
+    # already positive -- otherwise the np.abs() above would be a no-op and
+    # this test would pass vacuously
+    assert np.all(cosmo_data._dlogsigma_dlogmass < 0.0)
+
+
+def test_branching_rate_collapses_if_signed_alpha_used_instead_of_positive(tree_generator, monkeypatch):
+    # Reproduces the Stochastic_Occupation failure mode directly through
+    # PCH08's own branching-rate machinery, using a physically meaningful
+    # quantity (Nupper, the expected number of splits per step -- must be
+    # >= 0) rather than merely checking that np.abs() was called somewhere.
+    M2, M_res, delta0, d_omega = 1e12, 1e10, 1.68, 0.01
+    terms_correct = tree_generator.branching_rate_terms(M2, M_res, delta0, d_omega)
+    assert terms_correct["Nupper"] > 0.0
+
+    # Simulate the exact bug: alpha supplied with the wrong (negative) sign.
+    # dlogsigma_at_logmass is normally already positive (see
+    # test_cosmo_utils.test_dlogsigma_at_logmass_is_the_positive_magnitude_of_dlogsigma_dlogmass);
+    # branching_rate_terms reads it through this same method, so patching it
+    # here reproduces exactly what passing the raw signed
+    # CosmoData._dlogsigma_dlogmass into the kernel would do.
+    original = tree_generator.cosmo_data.dlogsigma_at_logmass
+    monkeypatch.setattr(tree_generator.cosmo_data, "dlogsigma_at_logmass", lambda lm: -np.abs(original(lm)))
+
+    terms_wrong_sign = tree_generator.branching_rate_terms(M2, M_res, delta0, d_omega)
+    # A negative Nupper is unphysical (it is a Poisson-type expected count)
+    # and, fed into the sampler's r1 <= Nupper acceptance test (r1 ~
+    # Uniform(0,1)), is *never* accepted -- exactly the "every tree comes
+    # back unbranched" symptom this audit started from.
+    assert terms_wrong_sign["Nupper"] < 0.0
+    assert terms_wrong_sign["Nupper"] != pytest.approx(terms_correct["Nupper"])
+
+
 def test_forest_numpy_no_warnings_when_some_trees_die(tree_generator):
     # Dead trees used to be filled in with M_safe == M_res exactly, a
     # degenerate input (qres=1, sigma_res == sigma2) that divides by zero
