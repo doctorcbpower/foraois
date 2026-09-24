@@ -24,7 +24,7 @@ D(z)     = D_raw(z) / D_raw(z=0)
 f(z)     = -1 - Omega_m(z)/2 + (1-Omega_m(z)) + 5*Omega_m(z)/(2*D_raw(z)/a)
 delta_col(z) = 1.686 * D(z_pk) / D(z)      (delta_col(z_pk) = 1.686)
 ```
-`z_pk` is the redshift at which `P(k)` and `sigma(M)` are evaluated: `CosmoData(params, redshift=[z_pk])` (only the first entry is used; default `[0.0]`). The barrier is normalised to the same epoch, so `delta_col(z)/sigma(M)`, the only combination a tree depends on, does not depend on the choice of `z_pk`. For `z_pk = 0` this is the usual `delta_col(z) = 1.686/D(z)`. Before 2026-09-20 the barrier was always normalised to z=0, which counted `D` twice whenever `z_pk != 0` (halo masses 4-5 dex too low at high redshift for `z_pk = 5`); `redshift=[0.0]` results are unaffected.
+`z_pk` is the redshift at which `P(k)` and `sigma(M)` are evaluated: `CosmoData(params, redshift=[z_pk])` (only the first entry is used; default `[0.0]`). The barrier is normalised to the same epoch, so `delta_col(z)/sigma(M)`, the only combination a tree depends on, does not depend on the choice of `z_pk`. For `z_pk = 0` this is the usual `delta_col(z) = 1.686/D(z)`. 
 
 Tabulated once at init on a uniform z-grid (`z_max=15`, `nz=5000` default) and looked up by interpolation; `pch_trees.py` guards that trees never grow past this table's `z_max`.
 
