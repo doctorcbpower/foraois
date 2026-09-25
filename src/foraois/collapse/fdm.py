@@ -35,4 +35,5 @@ def delta_c_fdm(M, z, cosmo_data):
         "suppression, not this effect.",
         stacklevel=2,
     )
+    
     return delta_c_cdm(M, z, cosmo_data)

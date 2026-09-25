@@ -111,8 +111,13 @@ def params_from_dict(params, source="parameters dict"):
     # inside CosmoData.get_power_spectrum() -- see that module's docstring.
     # dm_model_mass is the WDM particle mass in keV, or the FDM particle mass
     # in units of 1e-22 eV; required if dm_model is 'wdm' or 'fdm'.
+    # A general barrier can adopted; the default is 'flat', but for illustrative purposes
+    # we provide a 'linear' barrier with a 'beta' parameter than modulates the scale
+    # dependent contribution
     run_params["Code"]["dm_model"] = params["Run"].get("dm_model", "cdm")
     run_params["Code"]["dm_model_mass"] = params["Run"].get("dm_model_mass", None)
+    run_params["Code"]["barrier"] = params["Run"].get("barrier", "flat")
+    run_params["Code"]["barrier_parameter"] = params["Run"].get("barrier_parameter", 0.0)
 
     run_params["Code"]["pk_kmin"] = params["Run"].get("pk_kmin", 1.0e-4)
     run_params["Code"]["pk_kmax"] = params["Run"].get("pk_kmax", 1.0e2)

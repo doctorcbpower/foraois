@@ -27,6 +27,7 @@ def _get_model_funcs():
         from .fdm import delta_c_fdm
         from .sidm import delta_c_sidm
         from .wdm import delta_c_wdm
+        from .general_barrier import delta_c_general
 
         _MODEL_FUNCS.update(
             {
@@ -34,6 +35,7 @@ def _get_model_funcs():
                 "wdm": delta_c_wdm,
                 "fdm": delta_c_fdm,
                 "sidm": delta_c_sidm,
+                "general": delta_c_general,
             }
         )
     return _MODEL_FUNCS

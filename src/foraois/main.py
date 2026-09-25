@@ -124,6 +124,14 @@ def main():
     M_res = 1.0e10  # Msun/h — mass resolution
     N = args.n_trees
     dm_model = run_params["Code"].get("dm_model", "cdm")
+    
+    barrier = run_params["Code"].get("barrier", "flat")
+
+    if barrier != "flat":
+        print(
+            f"\nUsing general barrier='{barrier}', "
+            f"parameter='{run_params['Code'].get('barrier_parameter', None)}' ..."
+        )
 
     algorithm = args.algorithm
     backend = args.backend
