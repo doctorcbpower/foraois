@@ -86,7 +86,7 @@ Half-mode wavenumbers (`wdm_half_mode_k`, `fdm_half_mode_k`) solve `T(k_hm) = 1/
 
 ## Collapse barrier ([`collapse/`](../src/foraois/collapse) -- `delta_c(M, z, model, cosmo_data)`)
 
-The single interface for the spherical-collapse threshold, dispatching to a per-model implementation. Not consumed by `pch_trees.py` (see the module's own docstring): PCH08's Appendix A algorithm is derived for a barrier that depends only on `z`, and CDM/WDM (the only models with real content below) are mass-independent anyway, so there is nothing for that tree-building code to gain from routing through this. It is used by `zhang_hui_trees.py`, whose first-crossing solver accepts a general barrier (the tree builders currently use constant barriers).
+The single interface for the collapse threshold, dispatching to a per-model implementation. Not consumed by `pch_trees.py` (see the module's docstring): PCH08's Appendix A algorithm is derived for a barrier that depends only on `z`, and CDM/WDM (the only models with real content below) are mass-independent anyway, so there is nothing for that tree-building code to gain from routing through this. It is used by `zhang_hui_trees.py`, whose first-crossing solver accepts a general barrier. By default, the models (CDM, WDM, FDM) use constant barriers, but for illustrative purposes there is also a scale-dependent general barrier of the form `delta_col(z)+beta * S(M)`.
 
 | Model | Function | Formula | Status |
 |---|---|---|---|
