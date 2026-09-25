@@ -86,7 +86,7 @@ Half-mode wavenumbers (`wdm_half_mode_k`, `fdm_half_mode_k`) solve `T(k_hm) = 1/
 
 ## Collapse barrier ([`collapse/`](../src/foraois/collapse) -- `delta_c(M, z, model, cosmo_data)`)
 
-The single interface for the collapse threshold, dispatching to a per-model implementation. Not consumed by `pch_trees.py` (see the module's docstring): PCH08's Appendix A algorithm is derived for a barrier that depends only on `z`, and CDM/WDM (the only models with real content below) are mass-independent anyway, so there is nothing for that tree-building code to gain from routing through this. It is used by `zhang_hui_trees.py`, whose first-crossing solver accepts a general barrier. By default, the models (CDM, WDM, FDM) use constant barriers, but for illustrative purposes there is also a scale-dependent general barrier of the form `delta_col(z)+beta * S(M)`.
+The single interface for the collapse threshold, dispatching to a per-model implementation. Not consumed by `pch_trees.py` (see the module's docstring): PCH08's Appendix A algorithm is derived for a barrier that depends only on `z`, and CDM/WDM (the only models with real content below) are mass-independent anyway, so there is nothing for that tree-building code to gain from routing through this. It is used by `zhang_hui_trees.py`, whose first-crossing solver accepts a general barrier. By default, the models (CDM, WDM, FDM) use constant barriers, but for illustrative purposes there is also a scale-dependent general barrier which is a linear function of `\sigma(M)^2`.
 
 | Model | Function | Formula | Status |
 |---|---|---|---|
@@ -94,6 +94,7 @@ The single interface for the collapse threshold, dispatching to a per-model impl
 | WDM | `delta_c_wdm` | Same as CDM | Same constant barrier as CDM -- whether this is sufficient without a WDM-specific PCH08 rate refit (Benson et al. 2013's approach) is an open question, see [ROADMAP.md](../ROADMAP.md) |
 | FDM | `delta_c_fdm` | Falls back to the CDM value | **Known-inadequate placeholder** -- warns on every call. The real mass-dependent moving barrier is still open research, see [ROADMAP.md](../ROADMAP.md) |
 | SIDM | `delta_c_sidm` | -- | Always raises `NotImplementedError` -- no barrier scoped yet |
+| General | `delta_c_general` | `delta_col(z) + beta * \sigma(M)^2` | For illustrative purposes |
 
 ## Merger tree generation ([`pch_trees.py`](../src/foraois/pch_trees.py) -- `PCHMergerTree`)
 
