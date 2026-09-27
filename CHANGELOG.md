@@ -2,6 +2,25 @@
 
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); this package predates a formal release process, so entries start at the version this file was introduced.
 
+## Unreleased (branch `general_barrier_tree`)
+
+Collapse-barrier selection separated from the dark-matter model; an illustrative scale-dependent barrier added. No version bump.
+
+### Added
+
+- **`barrier` / `barrier_parameter` config keys** (defaults `fixed` and `0.15`). `barrier: fixed` is the existing spherical-collapse threshold `delta_sc(z)`. `barrier: linear` is `delta_c(M, z) = delta_sc(z) + beta*sigma^2(M)` with `beta = barrier_parameter` (>= 0), a **phenomenological, illustrative** barrier linear in the variance that rises towards small masses. It is a controlled test of the general first-crossing path, not a physically calibrated collapse model, and `beta = 0.15` is a chosen default. Unknown barrier names raise `ValueError`. `linear` with `beta = 0` is the fixed barrier.
+- `config/planck2018_linear_barrier.yml`: `planck2018_camb.yml` with `barrier: linear`. The shared `planck2018_camb.yml` sets `barrier: fixed`, so existing behaviour is unchanged.
+- `foraois.collapse.barrier_is_flat` and `require_flat_barrier`, and explicit `NotImplementedError` guards: PCH08, the closed-form ZH samplers (`build_forest_numpy`, `build_forest_numba`, `grow_full_population_numba`, `draw_progenitor_mass_zh_flat`), the constrained sampler and `expected_eps_splits_per_step` support only a flat barrier and reject `linear` with `beta > 0` instead of silently using the fixed barrier. Only the serial `ZhangHuiMergerTree.build_tree` supports a scale-dependent barrier.
+- `scripts/validate_linear_barrier_convergence.py` and tests in `tests/test_zhang_hui_validation.py`: the general first-crossing path against the analytic linear-barrier solution. The discrepancy is resolution-dependent discretisation error (about order 1/2 in `N_grid`; accuracy set by the grid spacing relative to `(delta_sc(z1) - delta_sc(z0))^2`), with no implementation error identified. See `docs/MODELS.md`, "Resolution of the general first-crossing path".
+
+### Changed
+
+- **The barrier is no longer selected through the dark-matter model label.** `delta_c(M, z, cosmo_data)` reads the configured barrier from `cosmo_data.run_params`. The four-argument form `delta_c(M, z, model, cosmo_data)` is still accepted and its `model` is ignored. The per-DM-model barrier modules (`cdm.py`, `wdm.py`, `fdm.py`, `sidm.py`), the `_MODEL_FUNCS` registry and the `general_barrier.py` stub were removed; `foraois.collapse` exported only `delta_c`, and no other repository or script used them.
+- **`model=` arguments** of the tree functions (`ZhangHuiMergerTree`, `first_crossing_step`, `draw_progenitor_mass_zh`, `build_constrained_tree`, ...) are retained for backwards compatibility and no longer select the collapse barrier.
+- **DM-specific checks moved to `CosmoData._dm_transfer_function`:** the FDM placeholder warning (now issued once per power-spectrum computation, not on every barrier evaluation) and the SIDM `NotImplementedError` (now raised for `dm_model: sidm`). Passing `model="sidm"` or `model="fdm"` to a tree function no longer warns or raises.
+- `CosmoData.from_params` accepts `barrier` and `barrier_parameter`.
+- **Linear barrier below the `sigma(M)` table.** `delta_c` evaluates `sigma^2` at the table floor (100 Msun/h) for smaller masses. Found in an end-to-end run: with the default `S_max_factor = 8` the first-crossing grid can extend past the variances the table represents; the mass map then underflowed, `delta_c` was `inf`, and `first_crossing_step` returned NaN/negative values. The fixed barrier is unaffected (it ignores mass).
+
 ## v0.1.2 (unreleased)
 
 Numerical-validity fix and audit (2026-09), no algorithmic changes.

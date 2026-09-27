@@ -41,7 +41,7 @@ def build_figure(configs=DEFAULT_CONFIGS, reference="CDM", z0=0.0, file_name="dm
             run_params["Code"]["pk_kmax"] = float(pk_kmax)
         cosmo_data = CosmoData(run_params, redshift=[z0])
         pk_data = cosmo_data.get_power_spectrum()
-        cosmo_data._prepare_sigma_grid(pk_data)
+        cosmo_data.prepare_sigma_grid(pk_data)
         models[label] = (cosmo_data, pk_data)
     return plot.plot_dm_model_comparison(models, reference=reference, file_name=file_name)
 

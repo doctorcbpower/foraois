@@ -65,6 +65,8 @@ class FakeCosmoData:
         _kw = dict(kind="linear", bounds_error=False, fill_value="extrapolate", assume_sorted=True)
         self._sigma_interp = interp1d(self._logmass_raw, self._sigma_raw, **_kw)
         self._dlogsigma_interp = interp1d(self._logmass_raw, self._alpha_raw, **_kw)
+        # The table is fixed (read from the FORTRAN files), so it is complete at construction; tree classes read it.
+        self._prepare_sigma_grid(None)
 
     def get_power_spectrum(self):
         return None

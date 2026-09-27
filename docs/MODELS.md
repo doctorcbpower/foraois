@@ -84,16 +84,29 @@ Selected by `Run.dm_model`, applied inside `get_power_spectrum()` as `P(k) *= T(
 
 Half-mode wavenumbers (`wdm_half_mode_k`, `fdm_half_mode_k`) solve `T(k_hm) = 1/sqrt(2)` for each model (closed-form for WDM; `brentq` root-find on the monotonic branch for FDM).
 
-## Collapse barrier ([`collapse/`](../src/foraois/collapse) -- `delta_c(M, z, model, cosmo_data)`)
+## Collapse barrier ([`collapse/barrier.py`](../src/foraois/collapse/barrier.py) -- `delta_c(M, z, cosmo_data)`)
 
-The single interface for the spherical-collapse threshold, dispatching to a per-model implementation. Not consumed by `pch_trees.py` (see the module's own docstring): PCH08's Appendix A algorithm is derived for a barrier that depends only on `z`, and CDM/WDM (the only models with real content below) are mass-independent anyway, so there is nothing for that tree-building code to gain from routing through this. It is used by `zhang_hui_trees.py`, whose first-crossing solver accepts a general barrier (the tree builders currently use constant barriers).
+The collapse barrier is a separate choice from the dark-matter model. The dark-matter model (`dm_model`) modifies `P(k)` and hence `sigma(M)` inside `CosmoData`; the barrier is selected by the config keys `barrier` and `barrier_parameter` and read from `cosmo_data.run_params`. Tree-building code calls `delta_c(M, z, cosmo_data)` and does not build the barrier itself. (The earlier form `delta_c(M, z, model, cosmo_data)` is still accepted; its `model` argument is ignored.) The `model=` argument of the tree functions is likewise retained for backwards compatibility only and does not select the barrier.
 
-| Model | Function | Formula | Status |
-|---|---|---|---|
-| CDM | `delta_c_cdm` | `delta_col(z)` (existing `CosmoData.delta_col_at_z`) | Done; `M` accepted, unused (constant-in-M by construction) |
-| WDM | `delta_c_wdm` | Same as CDM | Same constant barrier as CDM -- whether this is sufficient without a WDM-specific PCH08 rate refit (Benson et al. 2013's approach) is an open question, see [ROADMAP.md](../ROADMAP.md) |
-| FDM | `delta_c_fdm` | Falls back to the CDM value | **Known-inadequate placeholder** -- warns on every call. The real mass-dependent moving barrier is still open research, see [ROADMAP.md](../ROADMAP.md) |
-| SIDM | `delta_c_sidm` | -- | Always raises `NotImplementedError` -- no barrier scoped yet |
+| `barrier` | `delta_c(M, z)` | Notes |
+|---|---|---|
+| `fixed` (default) | `delta_sc(z)` = `CosmoData.delta_col_at_z(z)` | Mass-independent spherical-collapse threshold. `barrier_parameter` is ignored. |
+| `linear` | `delta_sc(z) + beta * sigma^2(M)`, `beta = barrier_parameter` (default 0.15, must be >= 0) | Linear in the variance `S = sigma^2(M)`, so `B(S) = a + beta*S`, whose first-crossing density is known analytically (`first_crossing.linear_barrier_first_crossing`). It rises towards small masses. **Phenomenological and illustrative**: a controlled test of the general first-crossing path, not a physically calibrated collapse model. `beta = 0.15` is a chosen default, not a prediction. `linear` with `beta = 0` is the fixed barrier. |
+
+For `linear`, masses below the floor of the `sigma(M)` table (100 Msun/h by default) are evaluated at the floor. This matters because the first-crossing grid (`S_max = S_max_factor * S_res`) can extend to variances the table does not represent (with a finite `pk_kmax`, `sigma^2` saturates at small mass), where the inverse mass map underflows; without the floor the barrier became `inf` and `first_crossing_step` returned NaN. Beyond the table's largest variance the barrier is therefore constant, so `B(S)` is not exactly `a + beta*S` there; this affects only the far tail of `f(S)` (part of the unresolved fraction `F_zh`), and was not quantified.
+
+Unknown `barrier` names raise `ValueError`. `config/planck2018_camb.yml` sets `barrier: fixed`; `config/planck2018_linear_barrier.yml` is the same configuration with `barrier: linear`.
+
+**Which algorithms support which barrier.** A scale-dependent barrier (`linear` with `beta > 0`) is supported only by the general serial Zhang-Hui path. Every other algorithm assumes a flat barrier and raises `NotImplementedError` (naming the requested barrier) rather than silently using the fixed one:
+
+| Barrier | PCH08 | ZH `build_tree` (serial) | ZH `build_forest_numpy` | ZH `build_forest_numba` / `grow_full_population_numba` | Constrained trees | `expected_eps_splits_per_step` |
+|---|---|---|---|---|---|---|
+| `fixed`, or `linear` with `beta = 0` | works | works | works | works | works | works |
+| `linear`, `beta > 0` | error | works | error | error | error | error |
+
+PCH08 reads `delta_col(z)` directly, the NumPy/Numba forest builders use the closed-form flat-barrier sampler, and the constrained construction assumes a flat effective barrier, so none of them can represent a mass-dependent barrier. There is no general vectorised or compiled moving-barrier sampler; the serial path is the reference implementation.
+
+The dark-matter model's own caveats belong to `CosmoData`: `dm_model='fdm'` warns that only the linear power-spectrum suppression is modelled (see the [FDM caveat](#fdm-caveat)), and `dm_model='sidm'` raises `NotImplementedError`.
 
 ## Merger tree generation ([`pch_trees.py`](../src/foraois/pch_trees.py) -- `PCHMergerTree`)
 
@@ -158,15 +171,44 @@ g2(S,S') = [2*dB/dS - (B(S)-B(S'))/(S-S')] * P0(B(S)-B(S'), S-S')
 
 ## Zhang-Hui tree generation ([`zhang_hui_trees.py`](../src/foraois/zhang_hui_trees.py) -- `ZhangHuiMergerTree`)
 
-The unfitted counterpart to `PCHMergerTree`: instead of PCH08's fitted `(G0, gamma1, gamma2)` rate, samples one binary split per step from `first_crossing.py`'s first-crossing distribution, evaluated against `collapse.delta_c(M, z, model, cosmo_data)`. The binary-per-step construction is an approximation to the EPS tree, and like PCH08 it needs a step small enough that the EPS expected number of splits per step is small (`foraois.diagnostics.expected_eps_splits_per_step`). This section summarizes the current API and its known limitations.
+The unfitted counterpart to `PCHMergerTree`: instead of PCH08's fitted `(G0, gamma1, gamma2)` rate, samples one binary split per step from `first_crossing.py`'s first-crossing distribution, evaluated against the configured barrier `collapse.delta_c(M, z, cosmo_data)`. The binary-per-step construction is an approximation to the EPS tree, and like PCH08 it needs a step small enough that the EPS expected number of splits per step is small (`foraois.diagnostics.expected_eps_splits_per_step`). This section summarizes the current API and its known limitations.
 
-Origin-shift convention (Bond, Cole, Efstathiou & Kaiser 1991): a progenitor of a halo `(M0, z0)` at target redshift `z1` is a first crossing of the shifted barrier `B(S) = delta_c(M(S), z1) - delta_c(M0, z0)` at `S = sigma(M(S))^2 - sigma(M0)^2`. For CDM/WDM (and FDM's current placeholder), `delta_c` is mass-independent, so `B(S)` reduces to the constant `delta_c(z1) - delta_c(z0)` -- the closed-form Press-Schechter/inverse-Gaussian case.
+Origin-shift convention (Bond, Cole, Efstathiou & Kaiser 1991): a progenitor of a halo `(M0, z0)` at target redshift `z1` is a first crossing of the shifted barrier `B(S) = delta_c(M(S), z1) - delta_c(M0, z0)` at `S = sigma(M(S))^2 - sigma(M0)^2`. For the fixed barrier `delta_c` is mass-independent, so `B(S)` reduces to the constant `delta_c(z1) - delta_c(z0)` -- the closed-form Press-Schechter/inverse-Gaussian case. For the linear barrier `B(S) = delta_c(z1) - delta_c(z0) + beta*S`.
 
 Three backends, differing in generality vs. speed:
 
-- **`build_tree`** (serial, single halo): general -- works for any barrier `solve_first_crossing` can handle, including a future genuinely mass-dependent one. O(`N_grid`^2) per step; `first_crossing_step` warns if `N_grid` is too coarse relative to the barrier's own scale `B(0)^2` (not simply `S_res`, a `sigma(M)`-derived scale that can be much larger).
-- **`build_forest_numpy`** (vectorized): only for models whose barrier is checked (at runtime, via `_assert_flat_barrier`) to be flat -- currently `cdm`/`wdm`/`fdm`. Exploits that a flat barrier's first-crossing distribution is a **Levy distribution** with a closed-form CDF/inverse (`erfc`/`erfcinv`), so no numerical solve is needed at all -- `~0.06s` for 50,000 trees over 5 steps. Raises `NotImplementedError` for `sidm` or any future non-flat barrier.
+- **`build_tree`** (serial, single halo): general -- works for any barrier `solve_first_crossing` can handle, and is the only ZH path that supports the scale-dependent `linear` barrier. O(`N_grid`^2) per step; `first_crossing_step` warns if `N_grid` is too coarse relative to the barrier's own scale `B(0)^2` (not simply `S_res`, a `sigma(M)`-derived scale that can be much larger). See "Resolution of the general first-crossing path" below for how the accuracy depends on that ratio.
+- **`build_forest_numpy`** (vectorized): only for a flat barrier (`fixed`, or `linear` with `beta = 0`), checked explicitly from the config (`require_flat_barrier`) and then numerically (`_assert_flat_barrier`). Exploits that a flat barrier's first-crossing distribution is a **Levy distribution** with a closed-form CDF/inverse (`erfc`/`erfcinv`), so no numerical solve is needed at all -- `~0.06s` for 50,000 trees over 5 steps. Raises `NotImplementedError` for a scale-dependent barrier.
 - **`build_forest_numba`** (JIT + `nb.prange`-parallel): same flat-barrier restriction and closed-form Levy sampling as `build_forest_numpy`, but stepped per-halo inside a `@njit(parallel=True)` kernel rather than array-vectorized -- `scipy.special.erfcinv` isn't callable from jitted code, so the kernel carries its own numba-compatible inverse-`erfc` (Winitzki approximation + Newton-Raphson refinement against `math.erf`, accurate to ~1e-6 relative error outside the extreme tails). Roughly 7x faster than `build_forest_numpy` for large forests. Needs `pip install foraois[numba]`. **Not seed-reproducible**: numba's `parallel=True`/`nb.prange` gives each worker thread its own internal RNG stream that `np.random.seed()` does not control, whether seeded outside the jitted function or as its own first statement -- this is a genuine numba limitation (also present, previously undocumented, in `PCHMergerTree.build_forest_numba`), not a bug specific to this kernel. Use `build_forest_numpy` when bitwise reproducibility across runs matters.
+
+### Resolution of the general first-crossing path
+
+For a scale-dependent barrier the serial path solves the first-crossing equation numerically (`solve_first_crossing`), and its accuracy depends on resolution. For the linear barrier the answer is known analytically, which gives a direct check. The comparison below is for `first_crossing_step`, the path `build_tree` uses.
+
+**Finding.** The discrepancy is discretisation error that decreases with resolution; no implementation error was identified.
+- `first_crossing_step` gives the same error as `solve_first_crossing` supplied with the exact barrier and derivative on the same grid, so the mass mapping, the numerical derivative and the step machinery add nothing.
+- With `beta = 0` the solution agrees with the analytic flat-barrier result to machine precision.
+- The error grows roughly in proportion to `beta` at fixed resolution (measured for `beta = 0.15` and `0.4` on the test fixture), and it decreases at about order 1/2 in `N_grid` in the tested regime (roughly a factor 0.71 per doubling). The reason for that order was not investigated.
+- The accuracy is set by the grid spacing `dS = S_max/N_grid` relative to the barrier scale `a^2 = B(0)^2 = (delta_sc(z1) - delta_sc(z0))^2`, which sets the width of the peak of `f(S)`.
+
+**Tested regime and measured accuracy.** `beta = 0.15`, `M0 = 1e12`, `M_res = 1e11` Msun/h, `z0 = 0`, `S_max = 2 S_res`. Errors are the peak-normalised error of `f(S)` over `0.05 < S <= S_res`, and the absolute error of the crossing probability at `S_res` (the `p_res` that `build_tree` uses). The maximum pointwise relative error is not used, because it is dominated by the tail and can change sign as `N_grid` grows.
+
+Real CAMB spectrum (`planck2018_linear_barrier.yml`; reproduce with `scripts/validate_linear_barrier_convergence.py`):
+
+| z1 | a^2 | N_grid | dS/a^2 | peak-normalised error | crossing-probability error |
+|---|---|---|---|---|---|
+| 2.0 | 5.51 | 100 | 0.015 | 6.1e-3 | 1.1e-3 |
+| 2.0 | 5.51 | 400 | 0.004 | 3.1e-3 | 5.4e-4 |
+| 2.0 | 5.51 | 1600 | 0.001 | 1.5e-3 | 2.7e-4 |
+| 0.5 | 0.254 | 100 | 0.33 | 7.7e-3 | 1.0e-2 |
+| 0.5 | 0.254 | 400 | 0.082 | 3.0e-3 | 2.8e-3 |
+| 0.5 | 0.254 | 1600 | 0.021 | 1.4e-3 | 1.3e-3 |
+
+At `z1 = 2` both errors fall monotonically. At `z1 = 0.5` the peak-normalised error falls monotonically, while the crossing-probability error is not monotone for `N_grid <~ 400` (it dips near `N_grid ~ 200` before rising, consistent with the signed error changing sign; the signed error was not inspected) and falls monotonically beyond that.
+
+**Coarse-grid regime.** When `dS/a^2` is of order 1 or larger the result is badly wrong, and `f(S)` and `p_res` can be non-physical (`f` negative, `p_res` slightly negative); `first_crossing_step` warns when `dS > a^2`. For example, at `z1 = 0.5` with `M_res = 1e10` and default `N_grid = 400`, `S_max_factor = 8` the pointwise error reached about 82%. On the synthetic-spectrum test fixture at `z1 = 0.5`, the crossing-probability error is 0.18 at `dS/a^2 = 0.86`, 0.04 at 0.43, and 2e-3 at 0.054 (`tests/test_zhang_hui_validation.py`).
+
+**Empirical guide, not a requirement.** In the tested regime, a few times 1e-3 in the quantities above needs roughly `dS/a^2 <~ 0.1`, i.e. `N_grid >~ 10 S_max/a^2`. This is a measured result for these setups, not a general theorem, and the code does not enforce it. The existing `first_crossing_step` warning fires only when `dS > a^2`, which is about ten times coarser than this. Because `a^2 = (delta_sc(z1) - delta_sc(z0))^2` shrinks with the step, smaller `dz` needs a finer grid at fixed accuracy, and the cost per step grows as `N_grid^2`. For `M0 = 1e12`, `M_res = 1e11` and `S_max = 2 S_res`, the guide gives `N_grid` of about 15 at `dz = 2`, 330 at `dz = 0.5`, 2,400 at `dz = 0.2` and 41,000 at `dz = 0.05`. No `dz` restriction is imposed.
 
 **Resolved limitation (was open, closed via a literature re-read):** a drawn progenitor mass `M2` originally had no guaranteed lower bound on its complement (`M0*(1-F_zh) - M2`, the "continuing" branch) the way PCH08's `q`-range restriction guarantees both split fragments stay resolved -- this complement could land below `M_res`, or even go negative, in **over half of steps** in a direct check at `dz=0.2`. Checked directly against N23's own footnote 3: their progenitor mass `M'` is drawn from `[M_res, M-M_res]` -- bounded away from *both* ends -- which by construction keeps both `M'` and `M-M'` `>= M_res`. Both backends now draw from the matching restricted range (`first_crossing_step`'s `S_lower`/`p_split`) rather than the unrestricted `[0, S_res]` -- checked directly, `0` of `221` two-progenitor draws landed below `M_res` afterward. `smooth_accretion` is still computed as the conservation residual (`parent_mass - max(progenitors) - merger_mass` in `build_tree`; the array equivalent in `build_forest_numpy`), kept as a cheap consistency check, but now provably equals the simple `F_zh*M` formula rather than folding in a real leftover.
 
@@ -224,6 +266,8 @@ A run is configured by a YAML file with top-level `Run`, `Cosmology`, and a sect
 | `mode` | -- (required) | `class` / `camb` / `user` (Boltzmann backend; `user` supplies your own tabulated P(k), no extra dependency) |
 | `dm_model` | `cdm` | `cdm` / `wdm` / `fdm` |
 | `dm_model_mass` | `None` | Required for `wdm` (keV) / `fdm` (1e-22 eV units) |
+| `barrier` | `fixed` | Collapse barrier, independent of `dm_model`: `fixed` (`delta_sc(z)`) or `linear` (`delta_sc(z) + beta*sigma^2(M)`, illustrative). See "Collapse barrier" above. |
+| `barrier_parameter` | `0.15` | `beta` for `linear` (must be >= 0); ignored for `fixed` |
 | `pk_kmin`, `pk_kmax` | 1e-4, 1e2 | Power spectrum k-range, h/Mpc -- `pk_kmax` sets how far down in mass `sigma(M)`/`alpha(M)` are accurate; see "Numerical validity of sigma(M) and alpha(M) at low mass" above before using `M_res` below ~1e7 Msun/h |
 | `pk_npoints` | 1000 | Number of log-k grid points |
 | `plot_pk`, `plot_mvar` | False | Generate P(k) / sigma(M) diagnostic plots |
@@ -254,7 +298,7 @@ python -m foraois.main --params_file <config.yml> --n_trees 1000 --backend numpy
 
 ## FDM caveat
 
-Current FDM support (`transfer_functions.T_FDM`) captures only the *linear power-spectrum suppression* of fuzzy dark matter. Some literature (e.g. Du et al. 2017) argues a mass-dependent collapse barrier is also needed to reproduce simulated FDM halo mass functions at the low-mass end; the current code still applies the constant CDM barrier `delta_col(z) = 1.686/D(z)` regardless of `dm_model`. Deriving a Schrodinger-Poisson-motivated, mass-dependent `delta_c(M,z)` is open research, see [ROADMAP.md](../ROADMAP.md).
+Current FDM support (`transfer_functions.T_FDM`) captures only the *linear power-spectrum suppression* of fuzzy dark matter. Some literature (e.g. Du et al. 2017) argues a mass-dependent collapse barrier is also needed to reproduce simulated FDM halo mass functions at the low-mass end; the current code applies the configured collapse barrier (the constant CDM barrier `delta_col(z) = 1.686/D(z)` unless `barrier: linear` is requested) regardless of `dm_model`; no FDM-specific barrier is implemented. Deriving a Schrodinger-Poisson-motivated, mass-dependent `delta_c(M,z)` is open research, see [ROADMAP.md](../ROADMAP.md).
 
 ## References
 

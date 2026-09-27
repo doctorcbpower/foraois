@@ -1,8 +1,10 @@
 Run:
   mode: camb
+  # ILLUSTRATIVE scale-dependent barrier (phenomenological, not a calibrated collapse model): identical to
+  # planck2018_camb.yml except barrier: linear. Only the general serial Zhang-Hui path (build_tree) supports it.
   # Collapse barrier, independent of dm_model: 'fixed' (delta_sc(z)) or 'linear' (delta_sc(z) + beta*sigma^2(M)).
   # barrier_parameter is beta, used only by 'linear'. See foraois.collapse.barrier.
-  barrier: fixed
+  barrier: linear
   barrier_parameter: 0.15
   pk_kmin: 1.e-4
   pk_kmax: 1.e2

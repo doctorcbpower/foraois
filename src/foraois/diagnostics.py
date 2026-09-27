@@ -101,7 +101,9 @@ def expected_eps_splits_per_step(cosmo_data, M0, z0, z1, M_res, model="cdm", n_q
     ----------
     cosmo_data : CosmoData
         Provides sigma(M) and delta_col(z); its sigma grid is populated when a tree generator is
-        constructed from it. The barrier is flat, so `model` only selects delta_c.
+        constructed from it. The barrier must be flat (`fixed`, or `linear` with beta=0): E is evaluated with
+        delta_c at M_res only, so a scale-dependent barrier raises `NotImplementedError`. `model` is retained for
+        compatibility and does not select the barrier.
     n_q : int
         Log-spaced quadrature points in q.
 
@@ -109,11 +111,12 @@ def expected_eps_splits_per_step(cosmo_data, M0, z0, z1, M_res, model="cdm", n_q
     -------
     float
     """
-    from foraois.collapse import delta_c
+    from foraois.collapse import delta_c, require_flat_barrier
 
     if M_res * 2.0 >= M0:
         return 0.0
-    d_omega = float(delta_c(M_res, z1, model, cosmo_data)) - float(delta_c(M_res, z0, model, cosmo_data))
+    require_flat_barrier(cosmo_data, "expected_eps_splits_per_step")
+    d_omega = float(delta_c(M_res, z1, cosmo_data)) - float(delta_c(M_res, z0, cosmo_data))
     sigma0_sq = float(cosmo_data.sigma_at_logmass(np.log10(M0))) ** 2
     lnq = np.linspace(np.log(M_res / M0), np.log(0.5), n_q)
     q = np.exp(lnq)

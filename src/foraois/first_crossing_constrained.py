@@ -3,6 +3,9 @@ A solver for N23's constrained (Brownian-bridge) first-crossing integral
 equation -- Nadler, Benson, Driskell, Du & Gluscevic 2023 (N23), MNRAS
 521, 3201, their Eq. A5.
 
+Navigation: this solver is a reference/validation implementation. The constrained tree path
+(`zhang_hui_constrained_trees.py`) does not call it; it uses only `simulate_bridge_path` from this module.
+
 This is deliberately a *separate* module and numerical method from
 first_crossing.py, not an extension of it. first_crossing.py's
 solve_first_crossing implements Zhang & Hui (2006)'s own derivation,

@@ -123,15 +123,8 @@ def main():
     # solve -- see zhang_hui_trees.py's own docstring).
     M_res = 1.0e10  # Msun/h — mass resolution
     N = args.n_trees
-    dm_model = run_params["Code"].get("dm_model", "cdm")
     
-    barrier = run_params["Code"].get("barrier", "flat")
-
-    if barrier != "flat":
-        print(
-            f"\nUsing general barrier='{barrier}', "
-            f"parameter='{run_params['Code'].get('barrier_parameter', None)}' ..."
-        )
+    dm_model = run_params["Code"].get("dm_model", "cdm")
 
     algorithm = args.algorithm
     backend = args.backend
@@ -173,11 +166,7 @@ def main():
     if algorithm == "constrained":
         M1, z1 = args.M1, args.z1
         z_max = zh_build_tree_z_max
-        # build_constrained_tree needs cosmology_data's sigma(M) grid, which
-        # PCHMergerTree/ZhangHuiMergerTree's own __init__ builds as a side
-        # effect (see their docstrings) -- neither is constructed on this
-        # path, so it must be built explicitly here instead.
-        cosmology_data._prepare_sigma_grid(pk_data)
+        # cosmology_data builds its sigma(M) table on first use; no tree object is needed for that.
         if M1 >= M0:
             raise ValueError(f"--M1={M1} must be < M0={M0}.")
         if z1 <= z0 or z1 >= z_max:

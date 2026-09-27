@@ -4,6 +4,7 @@ import numpy as np
 from scipy import integrate, interpolate
 
 from foraois import transfer_functions
+from foraois.collapse.barrier import DEFAULT_BARRIER, DEFAULT_BARRIER_PARAMETER
 from foraois.utils import io, window_function
 
 
@@ -21,11 +22,18 @@ class CosmoData:
     * ``precompute_delta_col_table()`` builds a dense z-grid of delta_col once
       so every downstream caller can use a cheap ``np.interp`` instead of
       re-integrating the growth ODE.
-    * ``_prepare_sigma_grid()`` now stores a ``scipy`` linear interpolant
+    * ``prepare_sigma_grid()`` stores a ``scipy`` linear interpolant
       (``assume_sorted=True``) so vectorised sigma lookups avoid Python-level
       loop overhead.
-    * Both tables are built automatically at the end of ``__init__`` so callers
-      don't have to remember to call them manually.
+    * The delta_col(z) table is built at the end of ``__init__``. The sigma(M)
+      table is owned by this class too, but is built on first use (the first
+      call to ``sigma_at_logmass``/``dlogsigma_at_logmass``/``logmass_at_sigma``,
+      or first read of the raw ``_logmass``/``_sigma``/``_dlogsigma_dlogmass``
+      arrays) with the default grid and this object's own
+      ``get_power_spectrum()``, or explicitly by calling
+      ``prepare_sigma_grid(...)`` -- e.g. to choose a different mass range or
+      resolution. It is not built in ``__init__`` because that would run
+      CLASS/CAMB for every construction. No tree class is needed to build it.
     """
 
     def __init__(self, params, redshift=None):
@@ -75,12 +83,21 @@ class CosmoData:
             sharp_k_alpha=params["Code"].get("sharp_k_alpha", 2.5),
         )
         # get_mass_variance() sets this as a side effect when called with an
-        # explicit window_function_type, but _prepare_sigma_grid() (called
-        # from PCHMergerTree.__init__) reads it before that ever happens, so
+        # explicit window_function_type, but prepare_sigma_grid() (run on first
+        # sigma(M) use) reads it before that ever happens, so
         # it must have a default here too -- kept in sync with self.wf's own
         # default above (see get_mass_variance/dlogsigma_dlogmass's comments
         # on why these are two separate attributes that must be kept equal).
         self.window_function_type = default_window_function_type
+
+        # sigma(M) table: empty until prepare_sigma_grid() runs (explicitly, or on first use through
+        # _ensure_sigma()). Backing storage for the _logmass/_sigma/_dlogsigma_dlogmass properties below.
+        self._tab_logmass = None
+        self._tab_sigma = None
+        self._tab_dlogsigma = None
+        self._sigma_interp = None
+        self._dlogsigma_interp = None
+        self._logmass_interp_inv = None
 
         # ------------------------------------------------------------------
         # Precompute delta_col(z) lookup table immediately so it is always
@@ -103,6 +120,8 @@ class CosmoData:
         mode="camb",
         dm_model="cdm",
         dm_model_mass=None,
+        barrier=DEFAULT_BARRIER,
+        barrier_parameter=DEFAULT_BARRIER_PARAMETER,
         window_function_type="top_hat",
         sharp_k_alpha=2.5,
         pk_kmin=1.0e-4,
@@ -153,6 +172,11 @@ class CosmoData:
         dm_model_mass : float, optional
             Required if ``dm_model`` is ``"wdm"`` (keV) or ``"fdm"``
             (units of 1e-22 eV).
+        barrier : {"fixed", "linear"}
+            Collapse barrier, independent of ``dm_model``; see ``foraois.collapse.barrier``.
+        barrier_parameter : float
+            beta in ``delta_c = delta_sc(z) + beta * sigma^2(M)`` for ``barrier="linear"`` (>= 0); ignored for
+            ``"fixed"``.
         window_function_type : {"top_hat", "sharp_k", "gaussian"}
             Window function for ``sigma(M)``; see
             ``foraois.utils.window_function.WindowFunctions``.
@@ -196,6 +220,8 @@ class CosmoData:
                 "use_spherical_bessel": use_spherical_bessel,
                 "dm_model": dm_model,
                 "dm_model_mass": dm_model_mass,
+                "barrier": barrier,
+                "barrier_parameter": barrier_parameter,
                 "window_function_type": window_function_type,
                 "sharp_k_alpha": sharp_k_alpha,
             },
@@ -631,7 +657,20 @@ class CosmoData:
                     "mass in units of 1e-22 eV) to be set in the Code/Run config."
                 )
             h = self.cosmo_params.get("h", self.cosmo_params["H0"] / 100.0)
+            # Dark-matter-model caveat, not a barrier choice: only the linear P(k) suppression is modelled.
+            warnings.warn(
+                "dm_model='fdm' is a placeholder: only the linear power-spectrum suppression T_FDM is applied. "
+                "FDM-specific collapse physics (a mass-dependent barrier) is not implemented, so trees use the "
+                "configured collapse barrier ('fixed' unless barrier='linear' is requested). Existing FDM results "
+                "capture only the linear-spectrum suppression, not that effect.",
+                stacklevel=2,
+            )
             return transfer_functions.T_FDM(k, m_a22, h)
+        elif dm_model == "sidm":
+            raise NotImplementedError(
+                "dm_model='sidm' is not implemented: no SIDM modification of the linear power spectrum or of "
+                "collapse has been derived or scoped, so there is no placeholder to fall back on."
+            )
         else:
             raise ValueError(f"Unknown dm_model '{dm_model}' (supported: 'cdm', 'wdm', 'fdm').")
 
@@ -678,10 +717,14 @@ class CosmoData:
     # NEW: optimised sigma grid with scipy interpolant
     # ------------------------------------------------------------------
 
-    def _prepare_sigma_grid(self, pk_data, logmass_min=2.0, logmass_max=16.0, dlogmass=0.01):
+    def prepare_sigma_grid(self, pk_data=None, logmass_min=2.0, logmass_max=16.0, dlogmass=0.01):
         """
         Precompute and cache sigma(M) and d log sigma / d log M on a uniform
-        log-mass grid, then build fast ``scipy`` interpolants.
+        log-mass grid, then build fast ``scipy`` interpolants. Always
+        (re)builds the table; ``_ensure_sigma`` is the build-once-on-first-use
+        entry point used by every lookup.
+
+        ``pk_data`` defaults to ``self.get_power_spectrum()``.
 
         Changes vs. original
         --------------------
@@ -714,6 +757,8 @@ class CosmoData:
         lookup needs 1e3 -- both well inside 1e2). It is not validated, and
         ``check_M_res`` will raise, below the table's own edge.
         """
+        if pk_data is None:
+            pk_data = self.get_power_spectrum()
         logmass = np.arange(logmass_min, logmass_max, dlogmass)
         radii = self.get_radius(10**logmass)
 
@@ -725,9 +770,9 @@ class CosmoData:
         )
 
         # Raw arrays (backward-compatible)
-        self._logmass = logmass
-        self._sigma = sigma
-        self._dlogsigma_dlogmass = dlogsigmadlogmass
+        self._tab_logmass = logmass
+        self._tab_sigma = sigma
+        self._tab_dlogsigma = dlogsigmadlogmass
 
         # Fast scipy interpolants (assume_sorted avoids repeated sort checks)
         _kw = dict(
@@ -745,6 +790,46 @@ class CosmoData:
         # requires of its x-values.
         self._logmass_interp_inv = interpolate.interp1d(sigma[::-1], logmass[::-1], **_kw)
 
+    # Historical name, kept because tests, scripts and test doubles call it.
+    _prepare_sigma_grid = prepare_sigma_grid
+
+    def _ensure_sigma(self):
+        """Build the default sigma(M) table if none exists yet. Never rebuilds, so a custom-range table is kept."""
+        if self._sigma_interp is None:
+            self.prepare_sigma_grid()
+
+    # The raw table arrays read on demand, so no reader can see an unbuilt table. Setters exist because tests
+    # substitute raw arrays by assignment (a table assigned this way counts as present for these readers only).
+    @property
+    def _logmass(self):
+        if self._tab_logmass is None:
+            self._ensure_sigma()
+        return self._tab_logmass
+
+    @_logmass.setter
+    def _logmass(self, value):
+        self._tab_logmass = value
+
+    @property
+    def _sigma(self):
+        if self._tab_sigma is None:
+            self._ensure_sigma()
+        return self._tab_sigma
+
+    @_sigma.setter
+    def _sigma(self, value):
+        self._tab_sigma = value
+
+    @property
+    def _dlogsigma_dlogmass(self):
+        if self._tab_dlogsigma is None:
+            self._ensure_sigma()
+        return self._tab_dlogsigma
+
+    @_dlogsigma_dlogmass.setter
+    def _dlogsigma_dlogmass(self, value):
+        self._tab_dlogsigma = value
+
     # ------------------------------------------------------------------
     # Numerical-validity guard for a chosen tree mass resolution (v0.1.2)
     # ------------------------------------------------------------------
@@ -759,7 +844,7 @@ class CosmoData:
         ``docs/PCH08_HIGH_Z_DIAGNOSTIC.md`` for the analogous timestep
         criterion, which this follows in spirit):
 
-        1. **Table coverage (raises).** ``_prepare_sigma_grid`` builds
+        1. **Table coverage (raises).** ``prepare_sigma_grid`` builds
            ``_logmass``/``_sigma``/``_dlogsigma_dlogmass`` down to
            ``logmass_min``. The compiled (numba) kernels read these arrays
            through a *clamping* lookup and would otherwise silently reuse
@@ -768,7 +853,7 @@ class CosmoData:
            regardless of the requested ``M_res``). This raises instead,
            for *every* path (compiled or not -- the scipy interpolants
            extrapolate rather than clamp below the table, which was never
-           validated either; see ``_prepare_sigma_grid``'s docstring).
+           validated either; see ``prepare_sigma_grid``'s docstring).
            ``lookup_factor`` is the smallest fraction of ``M_res`` the
            calling algorithm's kernel actually looks sigma up at: PCH08
            evaluates sigma at the half-mass point of a halo whose mass has
@@ -853,8 +938,8 @@ class CosmoData:
                 f"M_res={M_res:.4g} Msun/h needs sigma(M) at {probe:.4g} Msun/h"
                 + (f" (={lookup_factor:g}*M_res, this kernel's own smallest lookup)" if compiled else "")
                 + f", below this CosmoData's tabulated range (table starts at {table_min:.4g} Msun/h -- "
-                "built by _prepare_sigma_grid(logmass_min=...) at construction, from CosmoData.__init__/"
-                "PCHMergerTree.__init__/ZhangHuiMergerTree.__init__). Nothing below the table has been validated: "
+                "built by prepare_sigma_grid(logmass_min=...), on first use of sigma(M) unless prepared "
+                "explicitly). Nothing below the table has been validated: "
                 "extending logmass_min lower is untested, not merely inconvenient. Use a larger M_res, or extend "
                 "and independently validate the table before using a smaller one."
             )
@@ -896,6 +981,7 @@ class CosmoData:
         -------
         float or np.ndarray
         """
+        self._ensure_sigma()
         return self._sigma_interp(logmass)
 
     def dlogsigma_at_logmass(self, logmass):
@@ -911,6 +997,7 @@ class CosmoData:
         -------
         float or np.ndarray
         """
+        self._ensure_sigma()
         return self._dlogsigma_interp(logmass)
 
     def logmass_at_sigma(self, sigma):
@@ -928,6 +1015,7 @@ class CosmoData:
         -------
         float or np.ndarray   log10(M / [Msun/h])
         """
+        self._ensure_sigma()
         return self._logmass_interp_inv(sigma)
 
     # ------------------------------------------------------------------

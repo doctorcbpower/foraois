@@ -2,6 +2,22 @@
 Zhang & Hui (2006)-based progenitor-mass sampling: the exact,
 barrier-agnostic replacement for PCH08's fitted branching rate.
 
+Where this module sits (general mathematics -> ZH step -> tree):
+
+    first_crossing.py          general first-crossing mathematics: `solve_first_crossing`, analytic densities
+                               (no cosmology, no trees)
+    collapse/barrier.py        the barrier, `delta_c(M, z, cosmo_data)`
+    this module:
+      `first_crossing_step`    one (M0, z0) -> z1 step. Its first part is general excursion-set work (shifted
+                               barrier, S-grid, `solve_first_crossing`, cumulative f); its second part is
+                               Zhang-Hui / Nadler et al. (2023) specific (`F_zh`, `S_lower`, `p_split`). The
+                               `N_grid` / `S_max_factor` resolution machinery and its coarse-grid warning belong
+                               to this step, not to the solver.
+      `_flat_barrier_cdf`,     closed-form CDF / quantile of the flat-barrier first-crossing law (the integral and
+      `_flat_barrier_sample`   inverse of `first_crossing.flat_barrier_first_crossing`), used by the flat-barrier
+                               NumPy sampling paths
+      `draw_progenitor_mass_zh` progenitor sampling from a step; `ZhangHuiMergerTree` builds trees from it
+
 `draw_progenitor_mass_zh` is the single-progenitor analog of
 `pch_trees.PCHMergerTree.draw_progenitor_masses`: given a halo of mass
 `M0` at `z0`, and a target redshift `z1`, it draws the progenitor(s) at
@@ -12,16 +28,20 @@ barrier-agnostic replacement for PCH08's fitted branching rate.
 Origin-shift convention (standard excursion-set/conditional-mass-function
 setup, e.g. Bond, Cole, Efstathiou & Kaiser 1991): the walk is tracked
 relative to the parent halo's own trajectory point, `S0 = sigma(M0)^2`,
-`delta0 = delta_c(M0, z0, model, cosmo_data)`. A progenitor of mass
+`delta0 = delta_c(M0, z0, cosmo_data)`. A progenitor of mass
 `M(S) < M0` at `z1` corresponds to first crossing the shifted barrier
-`B(S) = delta_c(M(S), z1, model, cosmo_data) - delta0` at variance
+`B(S) = delta_c(M(S), z1, cosmo_data) - delta0` at variance
 `S = sigma(M(S))^2 - S0` (S increases as progenitor mass decreases).
-For the CDM/WDM models (`foraois.collapse`'s barrier is constant in M
-for both), `B(S)` reduces to the constant `delta_c(z1) - delta_c(z0)` --
-i.e. exactly the flat-barrier case `first_crossing.py`'s own
-`flat_barrier_first_crossing` already validates independently, which is
-this module's main internal consistency check (see
-tests/test_zhang_hui_trees.py).
+The barrier is the one configured on `cosmo_data` (`barrier` in the
+config; see `foraois.collapse.barrier`), not chosen by the dark-matter
+model. For the default `fixed` barrier, `B(S)` reduces to the constant
+`delta_c(z1) - delta_c(z0)` -- exactly the flat-barrier case
+`first_crossing.py`'s own `flat_barrier_first_crossing` validates
+independently, which is this module's main internal consistency check
+(see tests/test_zhang_hui_trees.py). For the `linear` barrier,
+`B(S) = delta_c(z1) - delta_c(z0) + beta*S`, which
+`first_crossing.linear_barrier_first_crossing` solves analytically
+(see tests/test_zhang_hui_validation.py for the resolution it needs).
 
 The unresolved-accretion mass fraction (PCH08's `F`) is not free from
 `first_crossing.py`'s existing machinery -- it is computed here as its
@@ -51,7 +71,7 @@ import numpy as np
 from scipy.integrate import cumulative_trapezoid
 from scipy.special import erfc, erfcinv
 
-from foraois.collapse import delta_c
+from foraois.collapse import delta_c, require_flat_barrier
 from foraois.cosmo_utils import ensure_delta_col_covers
 from foraois.first_crossing import solve_first_crossing
 
@@ -92,7 +112,11 @@ def _S_at_mass(M, sigma0_sq, cosmo_data):
 def _flat_barrier_cdf(S, b):
     """
     Exact CDF of the flat-barrier (constant B(S)=b) first-crossing
-    distribution -- the closed-form integral of
+    distribution. Mathematically this belongs beside
+    `first_crossing.flat_barrier_first_crossing`; it lives here because the
+    ZH flat-barrier sampling paths are its only users. The Numba kernels do
+    not call it (they inline their own equivalent, see `_erfcinv_numba`).
+    It is the closed-form integral of
     first_crossing.py's flat_barrier_first_crossing (Zhang & Hui eq. 18's
     b=0, constant-barrier case), a Levy distribution with scale b^2:
 
@@ -101,8 +125,8 @@ def _flat_barrier_cdf(S, b):
     Checked directly against numerical integration of
     flat_barrier_first_crossing to machine precision. This is what makes
     build_forest_numpy (below) avoid solve_first_crossing's O(N_grid^2)
-    solve entirely for the currently-only-supported flat-barrier models
-    (cdm, wdm, fdm's placeholder) -- see _assert_flat_barrier.
+    solve entirely for a flat barrier (`fixed`, or `linear` with beta=0)
+    -- see _assert_flat_barrier.
     """
     S = np.asarray(S, dtype=float)
     with np.errstate(divide="ignore"):
@@ -113,7 +137,8 @@ def _flat_barrier_sample(u, b):
     """
     Inverse of _flat_barrier_cdf: given u = F(S) in [0, 1], returns S, via
     the standard Levy-distribution quantile function
-    S = b^2 / (2 * erfcinv(u)^2). u=0 (erfcinv(0)=inf) maps to S=0 rather
+    S = b^2 / (2 * erfcinv(u)^2). The compiled paths do not call this; they
+    use `_erfcinv_numba` for the same quantile. u=0 (erfcinv(0)=inf) maps to S=0 rather
     than raising -- harmless here since build_forest_numpy only samples
     u=0 for entries it masks out afterward (see its own comments).
     """
@@ -122,29 +147,27 @@ def _flat_barrier_sample(u, b):
         return b**2 / (2.0 * erfcinv(u) ** 2)
 
 
-def _assert_flat_barrier(model, z_ref, cosmo_data):
+def _assert_flat_barrier(model, z_ref, cosmo_data, algorithm="the closed-form flat-barrier sampler"):
     """
-    build_forest_numpy's closed-form Levy sampling only applies when
-    delta_c(M, z, model, cosmo_data) doesn't depend on M -- true today for
-    cdm, wdm, and fdm's placeholder (all three literally return the same
-    constant-in-M value regardless of the M passed in; see collapse/*.py),
-    false for sidm (which raises before this check would even matter) and
-    for any future genuinely mass-dependent barrier (real FDM physics).
-    Checked at runtime against two very different masses, rather than
-    hardcoded against model names, so this keeps working automatically if
-    a model's flatness changes, and fails loudly instead of silently
-    mis-sampling if it isn't flat.
+    The closed-form Levy sampling used by `build_forest_numpy`,
+    `build_forest_numba`, `grow_full_population_numba` and
+    `draw_progenitor_mass_zh_flat` applies only when delta_c does not
+    depend on mass. The requested barrier is checked explicitly from the
+    config (`require_flat_barrier`, which raises `NotImplementedError` for
+    a scale-dependent barrier) and then, defensively, numerically: delta_c
+    is compared at two very different masses, so a barrier that is flat
+    by configuration but not in fact fails loudly instead of being
+    silently mis-sampled. `model` is accepted for signature compatibility
+    and does not select the barrier.
     """
+    require_flat_barrier(cosmo_data, algorithm)
     M_lo, M_hi = 1e6, 1e16
-    d_lo = float(delta_c(M_lo, z_ref, model, cosmo_data))
-    d_hi = float(delta_c(M_hi, z_ref, model, cosmo_data))
+    d_lo = float(delta_c(M_lo, z_ref, cosmo_data))
+    d_hi = float(delta_c(M_hi, z_ref, cosmo_data))
     if not np.isclose(d_lo, d_hi, rtol=1e-8, atol=1e-12):
         raise NotImplementedError(
-            f"build_forest_numpy's closed-form sampling requires a "
-            f"mass-independent (flat) collapse barrier; model={model!r} "
-            f"is not flat at z={z_ref} (delta_c({M_lo:.0e})={d_lo!r} != "
-            f"delta_c({M_hi:.0e})={d_hi!r}). Not yet supported -- see "
-            "ROADMAP.md."
+            f"{algorithm} requires a mass-independent (flat) collapse barrier, but delta_c is not flat at "
+            f"z={z_ref} (delta_c({M_lo:.0e})={d_lo!r} != delta_c({M_hi:.0e})={d_hi!r})."
         )
 
 
@@ -200,7 +223,7 @@ def first_crossing_step(
     if M_res >= M0:
         raise ValueError(f"M_res={M_res} must be < M0={M0}.")
 
-    delta0 = float(delta_c(M0, z0, model, cosmo_data))
+    delta0 = float(delta_c(M0, z0, cosmo_data))
     sigma0_sq = float(cosmo_data.sigma_at_logmass(np.log10(M0))) ** 2
     sigma_res_sq = float(cosmo_data.sigma_at_logmass(np.log10(M_res))) ** 2
     S_res = sigma_res_sq - sigma0_sq
@@ -226,7 +249,7 @@ def first_crossing_step(
         # (0-d or 1-d) the same way, while still working unchanged once a
         # genuinely mass-dependent delta_c (fdm/sidm) already returns
         # S-shaped output.
-        dc = np.asarray(delta_c(M_S, z1, model, cosmo_data), dtype=float)
+        dc = np.asarray(delta_c(M_S, z1, cosmo_data), dtype=float)
         return dc * np.ones_like(S) - delta0
 
     # Grid-resolution sanity check: S_max is sized off S_res (a
@@ -305,8 +328,14 @@ def draw_progenitor_mass_zh(
 ):
     """
     Draw the progenitor(s) of a halo of mass `M0` at `z0`, at target
-    redshift `z1`, using the exact Zhang & Hui (2006) first-crossing
-    distribution for `model`'s collapse barrier (`foraois.collapse`).
+    redshift `z1`, using the Zhang & Hui (2006) first-crossing
+    distribution for the collapse barrier configured on `cosmo_data`
+    (`foraois.collapse.delta_c`). This is the general path: it solves the
+    first-crossing equation numerically and supports a scale-dependent
+    barrier. For such a barrier the solver's grid must resolve the peak
+    of f(S), whose width is set by B(0)^2 = (delta_c(z1) - delta_c(z0))^2
+    -- see docs/MODELS.md ("Resolution of the general first-crossing
+    path") and tests/test_zhang_hui_validation.py.
 
     Parameters
     ----------
@@ -317,14 +346,11 @@ def draw_progenitor_mass_zh(
     M_res : float
         Mass resolution limit (Msun/h).
     cosmo_data : CosmoData
-        Must already have `_prepare_sigma_grid` run (a side effect of
-        constructing a `PCHMergerTree` against it today -- see
-        `pch_trees.PCHMergerTree.__init__`; calling it directly is also
-        fine: `cosmo_data._prepare_sigma_grid(cosmo_data.get_power_spectrum())`).
-    model : {'cdm', 'wdm', 'fdm', 'sidm'}
-        Passed straight through to `foraois.collapse.delta_c` -- 'fdm'
-        will warn (disclosed placeholder), 'sidm' will raise (not
-        implemented); see collapse/__init__.py.
+        Owns the sigma(M) table, built on first use or explicitly with `cosmo_data.prepare_sigma_grid(...)`.
+    model : str
+        Retained for backwards compatibility; it does not select the
+        collapse barrier (set by the `barrier` config value, see
+        `foraois.collapse.barrier`) or the dark-matter model (`dm_model`).
     rng : np.random.Generator, optional
     N_grid : int
         Grid resolution for `solve_first_crossing` (see its own
@@ -381,8 +407,8 @@ def draw_progenitor_mass_zh(
 def draw_progenitor_mass_zh_flat(M0, z0, z1, M_res, cosmo_data, model="cdm", rng=None):
     """
     Closed-form flat-barrier equivalent of `draw_progenitor_mass_zh`, for
-    the currently-flat-barrier models (cdm/wdm/fdm's placeholder -- see
-    `_assert_flat_barrier`). Same algorithm as
+    a flat barrier only (`fixed`, or `linear` with beta=0; a scale-dependent
+    barrier raises `NotImplementedError`). Same algorithm as
     `_build_forest_flat_barrier_numpy`'s per-halo math (Levy-distribution
     `_flat_barrier_cdf`/`_flat_barrier_sample`, and the same N23-footnote-3
     `p_split`/`S_lower` resolved-split restriction as
@@ -411,6 +437,7 @@ def draw_progenitor_mass_zh_flat(M0, z0, z1, M_res, cosmo_data, model="cdm", rng
     list of float
         Same 0/1/2-progenitor convention as `draw_progenitor_mass_zh`.
     """
+    require_flat_barrier(cosmo_data, "draw_progenitor_mass_zh_flat")
     rng = rng if rng is not None else np.random.default_rng()
 
     if M_res >= M0:
@@ -429,8 +456,8 @@ def draw_progenitor_mass_zh_flat(M0, z0, z1, M_res, cosmo_data, model="cdm", rng
     # doesn't depend on it (that's exactly what _assert_flat_barrier
     # verifies, once, up front) -- same choice _build_forest_flat_barrier_numpy
     # makes.
-    d0 = float(delta_c(M_res, z0, model, cosmo_data))
-    d1 = float(delta_c(M_res, z1, model, cosmo_data))
+    d0 = float(delta_c(M_res, z0, cosmo_data))
+    d1 = float(delta_c(M_res, z1, cosmo_data))
     d_omega = d1 - d0
 
     p_res = float(_flat_barrier_cdf(S_res, d_omega))
@@ -520,8 +547,8 @@ def _build_forest_flat_barrier_numpy(M0_array, z_steps, model, cosmo_data, M_res
         # M_res is an arbitrary evaluation mass -- delta_c doesn't depend
         # on it for a flat barrier (that's exactly what _assert_flat_barrier
         # verified once, outside this loop), it's just already at hand.
-        d0 = float(delta_c(M_res, z0, model, cosmo_data))
-        d1 = float(delta_c(M_res, z1, model, cosmo_data))
+        d0 = float(delta_c(M_res, z0, cosmo_data))
+        d1 = float(delta_c(M_res, z1, cosmo_data))
         d_omega = d1 - d0
 
         # Dummy positive value for dead trees (masked out below via `alive`),
@@ -984,13 +1011,13 @@ class ZhangHuiMergerTree:
     `PCHMergerTree.build_tree`'s own structure/signature (same z-stepping
     loop, same tree-of-dicts return shape) so downstream code
     (`utils/plot.py`) needs no special-casing to accept either backend's
-    tree; use it for a single illustrative tree, or where a genuinely
-    mass-dependent barrier is needed (once one exists -- see
-    `_assert_flat_barrier`).
+    tree; use it for a single illustrative tree, or where a scale-dependent
+    barrier is configured (`barrier: linear`; see `foraois.collapse`) --
+    the only ZH path that supports one.
 
     `build_forest_numpy`/`build_forest_numba` are the vectorised/parallel
-    forest-scale backends -- but only for the currently-flat-barrier
-    models (cdm/wdm/fdm's placeholder; see
+    forest-scale backends -- but only for a flat barrier (`fixed`, or
+    `linear` with beta=0; other barriers raise `NotImplementedError`; see
     `_build_forest_flat_barrier_numpy`'s docstring for why this is a
     closed-form path, not a vectorised `first_crossing_step`), matching
     `PCHMergerTree.build_forest_numpy`/`build_forest_numba`'s own
@@ -1017,8 +1044,11 @@ class ZhangHuiMergerTree:
         params : dict, optional
             Currently unused; accepted for signature parity with
             PCHMergerTree.
-        model : {"cdm", "wdm", "fdm", "sidm"}
-            Collapse-barrier model; see foraois.collapse.delta_c.
+        model : str
+            Retained for backwards compatibility. It no longer selects the
+            collapse barrier, which is set by the `barrier` config value
+            (see foraois.collapse.barrier); the dark-matter model is set by
+            `dm_model` and acts on P(k) inside CosmoData.
         rng : np.random.Generator, optional
             Default: a fresh np.random.default_rng() (unseeded).
         N_grid : int
@@ -1036,12 +1066,8 @@ class ZhangHuiMergerTree:
         self.N_grid = N_grid
         self.S_max_factor = S_max_factor
 
-        # Same side effect PCHMergerTree.__init__ performs: CosmoData's
-        # sigma(M) interpolants (and, since cosmo_utils.py's change
-        # alongside this module, their inverse) aren't built until this is
-        # called -- see cosmo_utils.py's _prepare_sigma_grid docstring.
+        # sigma(M) is owned by CosmoData (built on first use, or by prepare_sigma_grid); the tree only reads it.
         self.pk_data = cosmo_data.get_power_spectrum()
-        self.cosmo_data._prepare_sigma_grid(self.pk_data)
 
     def _ensure_delta_col_covers(self, z_max):
         """
@@ -1050,7 +1076,7 @@ class ZhangHuiMergerTree:
         silent-clamping failure mode this avoids) -- applies equally here,
         since `draw_progenitor_mass_zh` also reaches
         `cosmo_data.delta_col_at_z` indirectly, through
-        `collapse.delta_c_cdm`/`delta_c_wdm`. No cached grid copy to
+        `collapse.delta_c`. No cached grid copy to
         refresh afterward, unlike PCHMergerTree's version -- this class
         reads `cosmo_data.delta_col_at_z()` live instead.
         """
@@ -1123,10 +1149,10 @@ class ZhangHuiMergerTree:
         its docstring for why this is a closed-form path rather than a
         vectorised `first_crossing_step`, and its mass-budget caveat).
 
-        Only supports models whose barrier is mass-independent (checked
-        once via `_assert_flat_barrier`, at `z_max` -- true today for
-        `cdm`/`wdm`/`fdm`'s placeholder, not `sidm`); raises
-        `NotImplementedError` otherwise, rather than silently building an
+        Only supports a mass-independent barrier (`fixed`, or `linear` with
+        beta=0): a scale-dependent barrier raises `NotImplementedError`
+        (explicit guard, then `_assert_flat_barrier` as a defensive
+        numerical check at `z_max`), rather than silently building an
         incorrect forest.
 
         Parameters/returns deliberately match
@@ -1140,7 +1166,7 @@ class ZhangHuiMergerTree:
         """
         self._ensure_delta_col_covers(z_max)
         self.cosmo_data.check_M_res(M_res, compiled=False)
-        _assert_flat_barrier(self.model, z_max, self.cosmo_data)
+        _assert_flat_barrier(self.model, z_max, self.cosmo_data, "ZhangHuiMergerTree.build_forest_numpy")
 
         M0_array = np.asarray(M0_array, dtype=np.float64)
         z_steps = np.arange(z0, z_max + dz * 0.5, dz)
@@ -1164,9 +1190,8 @@ class ZhangHuiMergerTree:
         it for how it reimplements `scipy.special.erfcinv`, which isn't
         callable from inside `@njit` code).
 
-        Only supports models whose barrier is mass-independent (checked
-        once via `_assert_flat_barrier`, same as `build_forest_numpy`);
-        raises `NotImplementedError` otherwise.
+        Only supports a mass-independent barrier, guarded exactly as
+        `build_forest_numpy` is; raises `NotImplementedError` otherwise.
 
         Randomness note: unlike `build_tree`/`build_forest_numpy` (which
         use `self.rng`, a `np.random.Generator`), this uses `np.random`
@@ -1207,7 +1232,7 @@ class ZhangHuiMergerTree:
             )
         self._ensure_delta_col_covers(z_max)
         self.cosmo_data.check_M_res(M_res, lookup_factor=1.0, compiled=True)
-        _assert_flat_barrier(self.model, z_max, self.cosmo_data)
+        _assert_flat_barrier(self.model, z_max, self.cosmo_data, "ZhangHuiMergerTree.build_forest_numba")
 
         M0_array = np.asarray(M0_array, dtype=np.float64)
         z_steps = np.arange(z0, z_max + dz * 0.5, dz)
@@ -1246,8 +1271,8 @@ class ZhangHuiMergerTree:
         {checkpoint_z: [branch masses]} return convention (one dict per
         tree), same closed-form math, just compiled and parallelized
         across trees (nb.prange) instead of a serial per-tree Python loop.
-        Only supports flat-barrier models (checked once via
-        _assert_flat_barrier); raises NotImplementedError otherwise.
+        Only supports a flat barrier (guarded as `build_forest_numpy` is);
+        raises NotImplementedError otherwise.
 
         Parameters
         ----------
@@ -1280,7 +1305,7 @@ class ZhangHuiMergerTree:
             )
         self._ensure_delta_col_covers(z_max)
         self.cosmo_data.check_M_res(M_res, lookup_factor=1.0, compiled=True)
-        _assert_flat_barrier(self.model, z_max, self.cosmo_data)
+        _assert_flat_barrier(self.model, z_max, self.cosmo_data, "ZhangHuiMergerTree.grow_full_population_numba")
 
         z_steps = np.arange(z0, z_max + dz * 0.5, dz)
         checkpoints_sorted = sorted(set(checkpoints))

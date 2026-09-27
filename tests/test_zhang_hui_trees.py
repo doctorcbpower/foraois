@@ -3,6 +3,8 @@ Tests for foraois.zhang_hui_trees -- the single-progenitor Zhang & Hui
 sampler.
 """
 
+import warnings
+
 import numpy as np
 import pytest
 
@@ -139,35 +141,6 @@ def test_mass_budget_conserved(zh_tree_generator):
         # as pch_trees), so only check the budget when both survive it.
         if len(progenitors) == 2:
             assert np.isclose(sum(progenitors) + F_zh * M0, M0, rtol=1e-6)
-
-
-def test_fdm_model_warns(zh_tree_generator):
-    cosmo_data = zh_tree_generator.cosmo_data
-    with pytest.warns(UserWarning, match="placeholder"):
-        draw_progenitor_mass_zh(
-            1e12,
-            0.0,
-            0.5,
-            1e10,
-            cosmo_data,
-            model="fdm",
-            rng=np.random.default_rng(0),
-            N_grid=60,
-        )
-
-
-def test_sidm_model_raises(zh_tree_generator):
-    cosmo_data = zh_tree_generator.cosmo_data
-    with pytest.raises(NotImplementedError):
-        draw_progenitor_mass_zh(
-            1e12,
-            0.0,
-            0.5,
-            1e10,
-            cosmo_data,
-            model="sidm",
-            rng=np.random.default_rng(0),
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -384,13 +357,6 @@ def test_build_forest_numpy_reproducible_with_same_rng(zh_tree_generator):
     assert np.array_equal(mh_a, mh_b)
 
 
-def test_build_forest_numpy_raises_for_sidm(zh_tree_generator):
-    cosmo_data = zh_tree_generator.cosmo_data
-    zh_tree = ZhangHuiMergerTree(cosmo_data, model="sidm", rng=np.random.default_rng(0))
-    with pytest.raises(NotImplementedError):
-        zh_tree.build_forest_numpy(np.full(10, BT_M0), z0=BT_Z0, z_max=BT_Z_MAX, M_res=BT_M_RES, dz=BT_DZ)
-
-
 # ---------------------------------------------------------------------------
 # ZhangHuiMergerTree.build_forest_numba
 # ---------------------------------------------------------------------------
@@ -455,13 +421,6 @@ def test_build_forest_numba_not_reproducible_even_with_matched_seed(zh_tree_gene
     np.random.seed(7)
     mh_b, *_ = zh_tree.build_forest_numba(np.full(200, BT_M0), z0=BT_Z0, z_max=BT_Z_MAX, M_res=BT_M_RES, dz=BT_DZ)
     assert not np.array_equal(mh_a, mh_b)
-
-
-def test_build_forest_numba_raises_for_sidm(zh_tree_generator):
-    cosmo_data = zh_tree_generator.cosmo_data
-    zh_tree = ZhangHuiMergerTree(cosmo_data, model="sidm")
-    with pytest.raises(NotImplementedError):
-        zh_tree.build_forest_numba(np.full(10, BT_M0), z0=BT_Z0, z_max=BT_Z_MAX, M_res=BT_M_RES, dz=BT_DZ)
 
 
 def test_build_forest_numba_raises_actionable_error_without_numba(zh_tree_generator, monkeypatch):
@@ -539,3 +498,123 @@ def test_erfcinv_numba_matches_scipy():
 
     assert _erfcinv_numba(0.0) == np.inf
     assert _erfcinv_numba(2.0) == -np.inf
+
+
+# ---------------------------------------------------------------------------
+# collapse barrier: independent of the model= argument, and of the DM model
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("model", ["wdm", "fdm", "sidm", "anything"])
+def test_model_argument_does_not_select_the_barrier(zh_tree_generator, model):
+    # model= is retained for backwards compatibility only. It must neither change the barrier nor trigger the FDM
+    # placeholder warning or the SIDM error, which now belong to the dark-matter (CosmoData) layer.
+    cosmo_data = zh_tree_generator.cosmo_data
+    reference = first_crossing_step(1e12, 0.0, 0.5, 1e10, cosmo_data, model="cdm", N_grid=60)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        step = first_crossing_step(1e12, 0.0, 0.5, 1e10, cosmo_data, model=model, N_grid=60)
+    assert not [w for w in caught if "placeholder" in str(w.message)]
+    assert step["p_res"] == reference["p_res"]
+    assert step["F_zh"] == reference["F_zh"]
+
+
+# ---------------------------------------------------------------------------
+# scale-dependent (linear) barrier: supported only by the general serial path
+# ---------------------------------------------------------------------------
+
+LB_M0, LB_M_RES = 1.0e12, 1.0e11  # Msun/h; M_res/M0 = 0.1 keeps a serial tree cheap
+
+
+def test_serial_tree_with_linear_barrier_has_consistent_bookkeeping(zh_tree_generator, set_barrier):
+    cosmo_data = zh_tree_generator.cosmo_data
+    set_barrier(cosmo_data, "linear")  # default beta = 0.15
+    zh_tree = ZhangHuiMergerTree(cosmo_data, rng=np.random.default_rng(3), N_grid=400, S_max_factor=2.0)
+    tree = zh_tree.build_tree(M0=LB_M0, z0=0.0, z_max=1.0, M_res=LB_M_RES, dz=0.5)
+
+    assert len(tree) > 0
+    parent = LB_M0
+    for entry in tree:
+        assert np.isclose(entry["parent_mass"], parent)
+        assert all(LB_M_RES * (1 - 1e-9) <= m <= entry["parent_mass"] for m in entry["progenitors"])
+        assert entry["merger_mass"] >= 0.0 and entry["smooth_accretion"] >= -1e-6
+        main_plus_channels = max(entry["progenitors"]) + entry["smooth_accretion"] + entry["merger_mass"]
+        assert np.isclose(main_plus_channels, entry["parent_mass"], rtol=1e-8)
+        parent = max(entry["progenitors"])
+
+
+def test_beta_changes_the_resolved_crossing_probability(zh_tree_generator, set_barrier):
+    # A deterministic quantity (no random tree realisation involved).
+    cosmo_data = zh_tree_generator.cosmo_data
+    p_res = {}
+    for beta in (0.0, 0.15, 0.4):
+        set_barrier(cosmo_data, "linear", beta=beta)
+        p_res[beta] = first_crossing_step(LB_M0, 0.0, 2.0, LB_M_RES, cosmo_data, N_grid=200, S_max_factor=2.0)["p_res"]
+    assert p_res[0.0] - p_res[0.15] > 0.05
+    assert p_res[0.15] - p_res[0.4] > 0.05
+
+
+def test_zero_beta_step_is_identical_to_the_fixed_barrier(zh_tree_generator, set_barrier):
+    cosmo_data = zh_tree_generator.cosmo_data
+    fixed = first_crossing_step(LB_M0, 0.0, 0.5, LB_M_RES, cosmo_data, N_grid=100)
+    set_barrier(cosmo_data, "linear", beta=0.0)
+    linear0 = first_crossing_step(LB_M0, 0.0, 0.5, LB_M_RES, cosmo_data, N_grid=100)
+    assert np.array_equal(fixed["f"], linear0["f"])
+    assert fixed["p_res"] == linear0["p_res"] and fixed["F_zh"] == linear0["F_zh"]
+
+
+_FLAT_ONLY_ENTRY_POINTS = [
+    ("build_forest_numpy", {}),
+    ("build_forest_numba", {}),
+    ("grow_full_population_numba", {"checkpoints": [0.4], "n_trees": 2}),
+]
+
+
+def _call_flat_only(zh_tree, name, extra):
+    args = dict(M0=BT_M0, z0=BT_Z0, z_max=BT_Z_MAX, M_res=BT_M_RES, dz=BT_DZ)
+    if name == "grow_full_population_numba":
+        return getattr(zh_tree, name)(**args, **extra)
+    return getattr(zh_tree, name)(np.full(10, BT_M0), z0=BT_Z0, z_max=BT_Z_MAX, M_res=BT_M_RES, dz=BT_DZ)
+
+
+@pytest.mark.parametrize("name,extra", _FLAT_ONLY_ENTRY_POINTS)
+def test_flat_barrier_backends_reject_a_scale_dependent_barrier(zh_tree_generator, set_barrier, name, extra):
+    if name != "build_forest_numpy":
+        pytest.importorskip("numba")
+    cosmo_data = zh_tree_generator.cosmo_data
+    set_barrier(cosmo_data, "linear", beta=0.15)
+    zh_tree = ZhangHuiMergerTree(cosmo_data, rng=np.random.default_rng(0))
+    with pytest.raises(NotImplementedError, match=r"fixed collapse barrier.*barrier='linear'.*0\.15"):
+        _call_flat_only(zh_tree, name, extra)
+
+
+def test_closed_form_scalar_sampler_rejects_a_scale_dependent_barrier(zh_tree_generator, set_barrier):
+    from foraois.zhang_hui_trees import draw_progenitor_mass_zh_flat
+
+    cosmo_data = zh_tree_generator.cosmo_data
+    set_barrier(cosmo_data, "linear", beta=0.15)
+    with pytest.raises(NotImplementedError, match="draw_progenitor_mass_zh_flat"):
+        draw_progenitor_mass_zh_flat(1e12, 0.0, 0.5, 1e10, cosmo_data, rng=np.random.default_rng(0))
+
+
+@pytest.mark.parametrize("name,extra", _FLAT_ONLY_ENTRY_POINTS)
+def test_flat_barrier_backends_accept_zero_beta(zh_tree_generator, set_barrier, name, extra):
+    if name != "build_forest_numpy":
+        pytest.importorskip("numba")
+    cosmo_data = zh_tree_generator.cosmo_data
+    set_barrier(cosmo_data, "linear", beta=0.0)
+    zh_tree = ZhangHuiMergerTree(cosmo_data, rng=np.random.default_rng(0))
+    _call_flat_only(zh_tree, name, extra)  # must not raise
+
+
+def test_zero_beta_forest_is_identical_to_the_fixed_barrier_forest(zh_tree_generator, set_barrier):
+    # beta = 0 is the fixed barrier, so with the same seed the closed-form NumPy forest is bit-identical.
+    cosmo_data = zh_tree_generator.cosmo_data
+    fixed = ZhangHuiMergerTree(cosmo_data, rng=np.random.default_rng(11)).build_forest_numpy(
+        np.full(200, BT_M0), z0=BT_Z0, z_max=BT_Z_MAX, M_res=BT_M_RES, dz=BT_DZ
+    )
+    set_barrier(cosmo_data, "linear", beta=0.0)
+    linear0 = ZhangHuiMergerTree(cosmo_data, rng=np.random.default_rng(11)).build_forest_numpy(
+        np.full(200, BT_M0), z0=BT_Z0, z_max=BT_Z_MAX, M_res=BT_M_RES, dz=BT_DZ
+    )
+    assert np.array_equal(fixed[0], linear0[0])

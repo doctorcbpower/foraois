@@ -1032,8 +1032,8 @@ def plot_dm_model_comparison(models, reference, file_name=None):
     models : dict[str, tuple[CosmoData, dict]]
         {label: (cosmo_data, pk_data)} for every model to plot, including
         the reference itself. Each cosmo_data must already have
-        _prepare_sigma_grid(pk_data) called (or sigma_at_logmass will
-        raise) -- this function only reads, it doesn't build the grid.
+        its sigma(M) table prepared for the pk_data given here (built on first use from the object's own
+        get_power_spectrum(), or by prepare_sigma_grid(pk_data)); this function only reads it.
     reference : str
         Key into `models` to divide sigma(M) by (e.g. "CDM").
     file_name : str or None

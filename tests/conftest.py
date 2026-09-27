@@ -92,11 +92,28 @@ def zh_tree_generator(cosmo_data, zh_synthetic_pk_data):
     A PCHMergerTree built on zh_synthetic_pk_data's realistic-sigma(M)
     amplitude (see that fixture's docstring) -- used by
     tests/test_zhang_hui_trees.py and tests/test_zhang_hui_validation.py.
-    Still a PCHMergerTree (not a ZhangHuiMergerTree) purely to populate
-    cosmo_data's sigma(M) grid via the same _prepare_sigma_grid side
-    effect tree_generator above relies on; callers only use
-    .cosmo_data, constructing their own ZhangHuiMergerTree instances
-    with whatever model/rng/N_grid the test needs.
+    Still a PCHMergerTree (not a ZhangHuiMergerTree) only for historical
+    reasons: cosmo_data now builds its own sigma(M) table on first use, so
+    the tree is not needed for that. Callers only use .cosmo_data,
+    constructing their own ZhangHuiMergerTree instances with whatever
+    model/rng/N_grid the test needs.
     """
     cosmo_data.get_power_spectrum = lambda: zh_synthetic_pk_data
     return PCHMergerTree(cosmo_data, PLANCK_LIKE)
+
+
+@pytest.fixture
+def set_barrier(monkeypatch):
+    """
+    Returns ``set_barrier(cosmo_data, name, beta=None)``, which sets the collapse-barrier config keys on
+    ``cosmo_data.run_params`` for the duration of one test. ``run_params`` is the same dict object as
+    ``PLANCK_LIKE["Code"]``, shared by every test, so the keys are set through ``monkeypatch`` (restored after the
+    test) and never assigned directly.
+    """
+
+    def _set(cosmo_data, name, beta=None):
+        monkeypatch.setitem(cosmo_data.run_params, "barrier", name)
+        if beta is not None:
+            monkeypatch.setitem(cosmo_data.run_params, "barrier_parameter", beta)
+
+    return _set

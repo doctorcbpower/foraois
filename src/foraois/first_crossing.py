@@ -8,7 +8,7 @@ S, the mass variance -- which requires a sharp-k window function (see
 utils/window_function.py's sharp_k_window and its docstring): a top-hat
 window gives correlated steps, for which this integral equation does not
 apply (that needs the harder machinery of e.g. Musso & Sheth 2013,
-arXiv:1303.0337, deliberately out of scope here).
+arXiv:1303.0337)
 
 Zhang & Hui show f(S), the probability density of first crossing the
 barrier between S and S+dS, satisfies the Volterra integral equation
@@ -21,20 +21,38 @@ barrier between S and S+dS, satisfies the Volterra integral equation
     P0(delta, S) = 1/sqrt(2 pi S) * exp(-delta^2 / (2 S))           (eq. 2)
 
 which reduces to a triangular linear system on a uniform S-grid, solved by
-forward substitution -- no matrix-inversion package, no Monte Carlo. It
-reproduces the classic flat/linear-barrier analytic solutions, to discretisation error, as a
-special case (Section 2.2, eq. 18), which is the main thing this module's
-tests check it against, together with a direct Monte Carlo random walk
-(reproducing the paper's own Figure 2 cross-check).
+forward substitution. It reproduces the classic flat/linear-barrier analytic 
+solutions, to discretisation error, as a special case (Section 2.2, eq. 18), 
+which is the main thing this module's tests check it against, together with 
+a direct Monte Carlo random walk (reproducing the paper's Figure 2 cross-check).
 
 This is a general-purpose replacement for PCH08's fitted (gamma1, gamma2,
 G0) branching-rate machinery: PCH08's fit is specifically calibrated for a
-constant (CDM) barrier under a top-hat window; f(S) here is a numerical solution (discretisation error only) for any
-barrier shape (constant, linear, ellipsoidal-collapse, mass-dependent
-SIDM/FDM barriers, ...) as long as the walk is Markovian. Nothing in this
-module is wired into PCHMergerTree/pch_trees.py yet -- this is a
-standalone, independently-validated building block; integration is
-deliberately a separate, later step.
+constant (CDM) barrier under a top-hat window; f(S) here is a numerical 
+solution (discretisation error only) for any barrier shape (constant, linear,
+ellipsoidal-collapse, mass-dependent SIDM/FDM barriers, ...) as long as the 
+walk is Markovian. PCHMergerTree/pch_trees.py does not use this module (it keeps
+its fitted rate); ZhangHuiMergerTree does (see the navigation section below).
+It is a standalone, independently-validated building block.
+
+Where things live (navigation)
+------------------------------
+This module holds only the general mathematics and has no foraois imports: the Volterra solver
+(`solve_first_crossing`), the analytic first-crossing densities (`flat_barrier_first_crossing`,
+`linear_barrier_first_crossing`) and a Monte Carlo reference. It knows nothing about cosmology, barriers
+configured on `CosmoData`, or trees. The Zhang-Hui merger trees do use `solve_first_crossing`; the pieces that
+turn it into a tree step live in `zhang_hui_trees.py`:
+
+* `first_crossing_step` builds the shifted barrier B(S) = delta_c(M(S), z1) - delta_c(M0, z0) from
+  `foraois.collapse.delta_c`, sizes the S-grid, calls `solve_first_crossing` and integrates f(S). It then goes on
+  to the Zhang-Hui / Nadler et al. (2023) mass-budget quantities (`F_zh`, `S_lower`, `p_split`). It deliberately
+  combines the two: the general half has no other user, and it needs `cosmo_data`, which this module avoids.
+* The grid resolution machinery (`N_grid`, `S_max_factor`, the coarse-grid warning) belongs to that step, which
+  builds the grid from the resolution mass; `solve_first_crossing` takes `S_max` and `N` as given.
+* `_flat_barrier_cdf` / `_flat_barrier_sample` are the closed-form CDF and quantile of
+  `flat_barrier_first_crossing`; the closed-form ZH sampling paths use them (the Numba kernels carry their own
+  inlined equivalent).
+* `first_crossing_constrained.py` is a separate solver for the bridge-conditioned (constrained) problem.
 """
 
 import numpy as np

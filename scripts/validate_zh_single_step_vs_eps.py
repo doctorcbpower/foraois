@@ -46,7 +46,7 @@ def main():
     zh = ZhangHuiMergerTree(cd, rp, model="cdm")
     pch = PCHMergerTree(cd, rp)
     M0, Mres, z0, z1 = a.M0, a.M0 * a.mres_frac, a.z0, a.z0 + a.dz
-    d0, d1 = float(delta_c(Mres, z0, "cdm", cd)), float(delta_c(Mres, z1, "cdm", cd))
+    d0, d1 = float(delta_c(Mres, z0, cd)), float(delta_c(Mres, z1, cd))
     dw = d1 - d0
     s0 = float(cd.sigma_at_logmass(np.log10(M0))) ** 2
     S_res = float(cd.sigma_at_logmass(np.log10(Mres))) ** 2 - s0

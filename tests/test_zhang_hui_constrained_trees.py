@@ -420,3 +420,31 @@ def test_build_constrained_tree_weak_constraint_roughly_matches_unconstrained(
 
     ratio = at_earlier_constrained.mean() / at_earlier_unconstrained.mean()
     assert 0.7 < ratio < 1.3
+
+
+# ---------------------------------------------------------------------------
+# collapse barrier: the bridge construction assumes a flat effective barrier
+# ---------------------------------------------------------------------------
+
+
+def test_constrained_machinery_rejects_a_scale_dependent_barrier(zh_tree_generator, set_barrier):
+    cosmo_data = zh_tree_generator.cosmo_data
+    set_barrier(cosmo_data, "linear", beta=0.15)
+    with pytest.raises(NotImplementedError, match="constrained sampler"):
+        constrained_branch_growth_history(
+            1e14, 0.0, 1e12, 8.0, 1e10, cosmo_data, dS=0.05, rng=np.random.default_rng(0)
+        )
+    with pytest.raises(NotImplementedError, match="constrained sampler"):
+        build_constrained_tree(
+            1e14, 0.0, 1e12, 4.0, 8.0, 1e10, cosmo_data, rng=np.random.default_rng(0), dz=0.5, N_grid=60
+        )
+
+
+def test_constrained_machinery_accepts_linear_barrier_with_zero_beta(zh_tree_generator, set_barrier):
+    cosmo_data = zh_tree_generator.cosmo_data
+    set_barrier(cosmo_data, "linear", beta=0.0)
+    history = constrained_branch_growth_history(
+        1e14, 0.0, 1e12, 8.0, 1e10, cosmo_data, dS=0.05, rng=np.random.default_rng(0)
+    )
+    assert history[-1]["mass"] == pytest.approx(1e12, rel=1e-6)
+

@@ -12,8 +12,9 @@ halo growth histories, with two interchangeable algorithms:
   approach, with three interchangeable performance backends (`serial`/`numpy`/`numba`).
 - **`ZhangHuiMergerTree`** -- builds binary-per-step trees from the Zhang &
   Hui (2006) first-crossing distribution rather than a fitted rate. The
-  first-crossing solver accepts a general barrier; the tree builders currently
-  use constant barriers. Includes a working implementation of
+  first-crossing solver accepts a general barrier. The vectorised builders use
+  the fixed barrier only; the serial builder also supports an illustrative
+  scale-dependent barrier (`barrier: linear`, see docs/MODELS.md). Includes a working implementation of
   Nadler, Benson, Driskell, Du & Gluscevic (2023)'s Brownian-bridge-constrained
   excursions: merger trees guaranteed to reach a specified progenitor mass at
   a specified redshift, useful for cheaply sampling rare/outlier growth

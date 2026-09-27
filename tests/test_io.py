@@ -109,3 +109,47 @@ def test_get_params_loads_real_config_file():
     params = io.get_params("config/planck2018_camb.yml")
     assert params["Code"]["mode"] == "camb"
     assert params["Cosmology"]["H0"] == pytest.approx(67.556)
+
+
+# ---------------------------------------------------------------------------
+# collapse-barrier config: independent of dm_model
+# ---------------------------------------------------------------------------
+
+
+def test_params_from_dict_barrier_defaults_to_fixed_with_beta_0p15():
+    code = io.params_from_dict(RAW_PARAMS)["Code"]
+    assert code["barrier"] == "fixed"
+    assert code["barrier_parameter"] == pytest.approx(0.15)
+
+
+def test_params_from_dict_carries_barrier_settings_through_independently_of_dm_model():
+    raw = {**RAW_PARAMS, "Run": {**RAW_PARAMS["Run"], "barrier": "linear", "barrier_parameter": 0.3, "dm_model": "cdm"}}
+    code = io.params_from_dict(raw)["Code"]
+    assert (code["barrier"], code["barrier_parameter"], code["dm_model"]) == ("linear", 0.3, "cdm")
+
+
+def test_params_from_dict_rejects_unknown_barrier():
+    raw = {**RAW_PARAMS, "Run": {**RAW_PARAMS["Run"], "barrier": "flat"}}
+    with pytest.raises(ValueError, match="Unknown barrier"):
+        io.params_from_dict(raw)
+
+
+def test_params_from_dict_rejects_negative_beta_for_linear_barrier():
+    raw = {**RAW_PARAMS, "Run": {**RAW_PARAMS["Run"], "barrier": "linear", "barrier_parameter": -0.1}}
+    with pytest.raises(ValueError, match="barrier_parameter >= 0"):
+        io.params_from_dict(raw)
+
+
+def test_shared_default_config_uses_the_fixed_barrier():
+    code = io.get_params("config/planck2018_camb.yml")["Code"]
+    assert (code["barrier"], code["barrier_parameter"]) == ("fixed", pytest.approx(0.15))
+
+
+def test_linear_barrier_config_differs_from_the_default_only_in_the_barrier():
+    default = io.get_params("config/planck2018_camb.yml")
+    linear = io.get_params("config/planck2018_linear_barrier.yml")
+    assert (linear["Code"]["barrier"], linear["Code"]["barrier_parameter"]) == ("linear", pytest.approx(0.15))
+    assert default["Cosmology"] == linear["Cosmology"]
+    assert {k: v for k, v in default["Code"].items() if k != "barrier"} == {
+        k: v for k, v in linear["Code"].items() if k != "barrier"
+    }

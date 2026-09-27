@@ -379,3 +379,43 @@ def test_smooth_accretion_and_merger_mass_conserve_mass_numba(tree_generator):
     assert np.allclose(forward_gain, channel_sum, rtol=1e-8, atol=1e-6)
     assert np.all(smooth_accretion >= 0.0)
     assert np.all(merger_mass >= 0.0)
+
+
+# ---------------------------------------------------------------------------
+# collapse barrier: PCH08 reads delta_col(z) directly, so it supports only the fixed barrier
+# ---------------------------------------------------------------------------
+
+
+def test_pch08_rejects_a_scale_dependent_barrier(tree_generator, set_barrier):
+    from foraois.pch_trees import PCHMergerTree
+
+    cosmo_data = tree_generator.cosmo_data
+    set_barrier(cosmo_data, "linear", beta=0.15)
+    with pytest.raises(NotImplementedError, match=r"PCHMergerTree.*fixed collapse barrier.*barrier='linear'"):
+        PCHMergerTree(cosmo_data, {})
+
+
+def test_pch08_accepts_linear_barrier_with_zero_beta(tree_generator, set_barrier):
+    from foraois.pch_trees import PCHMergerTree
+
+    cosmo_data = tree_generator.cosmo_data
+    set_barrier(cosmo_data, "linear", beta=0.0)
+    PCHMergerTree(cosmo_data, {})  # beta = 0 is the fixed barrier PCH08 already implements
+
+
+def test_pch08_accepts_the_duck_typed_cosmodata_of_the_fortran_cross_check(monkeypatch):
+    # scripts/paper_figs/_fortran_compare.py builds PCHMergerTree on a stand-in that has none of CosmoData's config
+    # (no run_params). Such an object carries no barrier request and must be accepted as the fixed barrier.
+    from pathlib import Path
+
+    from foraois.collapse import barrier_is_flat, delta_c
+
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / "scripts" / "paper_figs"))
+    from _fortran_compare import FakeCosmoData, build_pch
+
+    assert not hasattr(FakeCosmoData(), "run_params")
+    pch = build_pch()  # raised AttributeError when the flat-barrier guard assumed run_params
+    assert barrier_is_flat(pch.cosmo_data)
+    assert delta_c(1e12, 0.5, pch.cosmo_data) == pch.cosmo_data.delta_col_at_z(0.5)
+    assert np.isfinite(pch._sigma_at_mass(1e13))
+

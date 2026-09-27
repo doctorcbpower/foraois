@@ -149,6 +149,26 @@ def test_dm_transfer_function_fdm_requires_mass(cosmo_data):
         cosmo_data._dm_transfer_function(np.array([1.0]))
 
 
+def test_dm_transfer_function_fdm_warns_that_it_is_a_placeholder(cosmo_data, monkeypatch):
+    # The FDM caveat belongs to the dark-matter model (this transfer-function layer), not to barrier evaluation.
+    monkeypatch.setitem(cosmo_data.run_params, "dm_model", "fdm")
+    monkeypatch.setitem(cosmo_data.run_params, "dm_model_mass", M_A22)
+    with pytest.warns(UserWarning, match="placeholder"):
+        cosmo_data._dm_transfer_function(np.array([1.0]))
+
+
+def test_dm_transfer_function_sidm_not_implemented(cosmo_data, monkeypatch):
+    monkeypatch.setitem(cosmo_data.run_params, "dm_model", "sidm")
+    with pytest.raises(NotImplementedError, match="not implemented"):
+        cosmo_data._dm_transfer_function(np.array([1.0]))
+
+
+def test_dm_transfer_function_unknown_model_raises_value_error(cosmo_data, monkeypatch):
+    monkeypatch.setitem(cosmo_data.run_params, "dm_model", "not_a_real_model")
+    with pytest.raises(ValueError, match="Unknown dm_model"):
+        cosmo_data._dm_transfer_function(np.array([1.0]))
+
+
 # ---------------------------------------------------------------------------
 # Real-CAMB integration tests (skipped if camb isn't installed)
 # ---------------------------------------------------------------------------

@@ -12,9 +12,8 @@ class MassFunctions:
         Parameters
         ----------
         cosmo_data : foraois.cosmo_utils.CosmoData
-            Must already have its sigma(M) grid built (e.g. via
-            PCHMergerTree(cosmo_data, ...), which calls
-            cosmo_data._prepare_sigma_grid() as a side effect).
+            Owns the sigma(M) table; it is built on first use if not already prepared
+            (see CosmoData.prepare_sigma_grid).
         redshift : list of float, optional
             Redshift(s) used for the cosmic mean density; default [0.0].
         """

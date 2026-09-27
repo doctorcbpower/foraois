@@ -28,18 +28,19 @@ Algorithm:
    behaviour the reflection principle exists to guarantee in their
    different (integral-equation-based) derivation.
 3. Each point where the running maximum *increases* is a genuine collapse
-   event: invert `delta_c(M(S), z, model, cosmo_data) = delta0_abs +
+   event: invert `delta_c(M(S), z, cosmo_data) = delta0_abs +
    delta_max(S)` for `z`, given `S` (hence `M(S)`) known -- a plain 1D
-   root-find against whatever `delta_c` returns, which is what makes this
-   approach barrier-agnostic: it works unchanged for a future
-   mass-dependent barrier.
+   root-find against whatever `delta_c` returns. That inversion is
+   barrier-agnostic, but the bridge construction in step 1 assumes a flat
+   effective barrier, so `constrained_branch_growth_history` requires one
+   (`require_flat_barrier`) and raises `NotImplementedError` otherwise.
 4. Filter to `M(S) >= M_res`, matching every other backend's convention.
 """
 
 import numpy as np
 from scipy.optimize import brentq
 
-from foraois.collapse import delta_c
+from foraois.collapse import delta_c, require_flat_barrier
 from foraois.cosmo_utils import ensure_delta_col_covers
 from foraois.first_crossing_constrained import simulate_bridge_path
 from foraois.zhang_hui_trees import ZhangHuiMergerTree, _mass_at_S
@@ -58,9 +59,9 @@ def _extract_successive_maxima(S_grid, delta_path):
     return S_grid[is_new_record], delta_path[is_new_record]
 
 
-def _invert_z_for_delta(target_delta_absolute, M, z_lo, cosmo_data, model):
+def _invert_z_for_delta(target_delta_absolute, M, z_lo, cosmo_data):
     """
-    Solve `delta_c(M, z, model, cosmo_data) = target_delta_absolute` for
+    Solve `delta_c(M, z, cosmo_data) = target_delta_absolute` for
     `z >= z_lo`, via `scipy.optimize.brentq` with an expanding upper
     bracket (no a priori bound on how high z might need to go for an
     extreme constraint) -- a plain root-find against whatever `delta_c`
@@ -75,7 +76,7 @@ def _invert_z_for_delta(target_delta_absolute, M, z_lo, cosmo_data, model):
     """
 
     def f(z):
-        return float(delta_c(M, z, model, cosmo_data)) - target_delta_absolute
+        return float(delta_c(M, z, cosmo_data)) - target_delta_absolute
 
     z_hi = z_lo + 5.0
     while f(z_hi) < 0:
@@ -118,10 +119,10 @@ def constrained_branch_growth_history(
     M_res : float
         Mass resolution limit -- collapse events below this are dropped.
     cosmo_data : CosmoData
-        Must already have `_prepare_sigma_grid` run (see
-        `zhang_hui_trees.ZhangHuiMergerTree.__init__`).
-    model : {'cdm', 'wdm', 'fdm'}
-        'sidm' will raise (not implemented) via `collapse.delta_c`.
+        Owns the sigma(M) table, built on first use or explicitly with `cosmo_data.prepare_sigma_grid(...)`.
+    model : str
+        Retained for backwards compatibility; it does not select the
+        collapse barrier (see `foraois.collapse.barrier`).
     dS : float
         Step size for `simulate_bridge_path`'s own S-grid.
     rng : np.random.Generator, optional
@@ -170,8 +171,11 @@ def constrained_branch_growth_history(
     # past the table's current range, exactly as it doesn't here.
     ensure_delta_col_covers(cosmo_data, z1)
 
-    delta0_abs = float(delta_c(M0, z0, model, cosmo_data))
-    delta1_abs = float(delta_c(M1, z1, model, cosmo_data))
+    # The bridge construction assumes a flat effective barrier (see the module docstring).
+    require_flat_barrier(cosmo_data, "The constrained sampler")
+
+    delta0_abs = float(delta_c(M0, z0, cosmo_data))
+    delta1_abs = float(delta_c(M1, z1, cosmo_data))
     sigma0_sq = float(cosmo_data.sigma_at_logmass(np.log10(M0))) ** 2
     sigma1_sq = float(cosmo_data.sigma_at_logmass(np.log10(M1))) ** 2
     S1 = sigma1_sq - sigma0_sq
@@ -215,7 +219,7 @@ def constrained_branch_growth_history(
         M = float(_mass_at_S(np.array([S]), sigma0_sq, cosmo_data)[0])
         if M < M_res:
             break
-        z = _invert_z_for_delta(delta0_abs + delta, M, z_prev, cosmo_data, model)
+        z = _invert_z_for_delta(delta0_abs + delta, M, z_prev, cosmo_data)
         history.append(
             {
                 "redshift": z,

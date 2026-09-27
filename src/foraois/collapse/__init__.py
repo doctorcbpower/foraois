@@ -1,24 +1,12 @@
 """
-foraois.collapse -- collapse-barrier physics, isolated from the
-excursion-set/tree-building machinery (pch_trees.py, first_crossing.py).
+foraois.collapse -- the collapse-barrier prescription delta_c(M, z), kept separate from the dark-matter model
+(which acts on P(k) and sigma(M) inside ``CosmoData``) and from the first-crossing and tree algorithms.
 
-`delta_c(M, z, model, cosmo_data)` (barrier.py) is the only public
-interface tree-building code should depend on.
-
-Per-model modules:
-    cdm.py   -- delta_c_cdm: constant delta_col(z), mass-independent.
-    wdm.py   -- delta_c_wdm: same constant barrier as CDM (whether this is
-                actually sufficient without a WDM-specific rate refit is
-                an open question -- see ROADMAP.md).
-    fdm.py   -- delta_c_fdm: NOT the real physics -- falls back to the
-                constant CDM barrier as a known-inadequate placeholder,
-                and warns every time, rather than silently returning a
-                wrong answer as though it were correct. The real
-                mass-dependent barrier is still open research (ROADMAP.md).
-    sidm.py  -- delta_c_sidm: not implemented at all -- no barrier has
-                even been scoped (ROADMAP.md).
+The barrier is chosen by the config keys ``barrier`` (``fixed`` or ``linear``) and ``barrier_parameter``; see
+``barrier.py`` for the definitions and for which algorithms support which barrier. ``delta_c(M, z, cosmo_data)`` is
+the interface tree-building code depends on.
 """
 
-from .barrier import delta_c
+from .barrier import barrier_is_flat, barrier_settings, delta_c, require_flat_barrier
 
-__all__ = ["delta_c"]
+__all__ = ["barrier_is_flat", "barrier_settings", "delta_c", "require_flat_barrier"]

@@ -16,8 +16,9 @@ Known gaps and open questions, in no particular order.
   refit of the branching-rate parameters (as Benson et al. 2013 did for
   PCH08's own fit) hasn't been checked here.
 
-- **FDM's collapse barrier.** `delta_c_fdm` is a disclosed placeholder that
-  falls back to the constant CDM value (and warns on every call) -- the real
+- **FDM's collapse barrier.** `dm_model: fdm` is a disclosed placeholder: the
+  collapse barrier is the configured one (fixed unless `barrier: linear`), and
+  `CosmoData` warns that only the power-spectrum suppression is modelled -- the real
   physics is a genuinely mass-dependent moving barrier arising from
   Schrodinger-Poisson quantum pressure, which is still open research. Current
   FDM support only captures the *linear* power-spectrum suppression.

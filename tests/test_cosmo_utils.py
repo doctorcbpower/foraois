@@ -679,3 +679,63 @@ def test_nu_is_independent_of_pk_redshift():
     s8_5 = np.sqrt(c5.get_mass_variance(pk5, radius=8.0))
     D5, _, _ = c0.get_linear_growth_and_collapse(redshift=5.0)
     assert s8_5 / s8_0 == pytest.approx(D5, rel=0.02)
+
+
+# ---------------------------------------------------------------------------
+# sigma(M) lifecycle: CosmoData owns the table; no tree object is needed to build it.
+# ---------------------------------------------------------------------------
+
+
+def _with_pk(cosmo_data, pk_data):
+    cosmo_data.get_power_spectrum = lambda: pk_data
+    return cosmo_data
+
+
+def test_fresh_cosmodata_evaluates_sigma_without_a_tree(cosmo_data, synthetic_pk_data):
+    # No PCHMergerTree/ZhangHuiMergerTree has been constructed: the first lookup builds the default table.
+    _with_pk(cosmo_data, synthetic_pk_data)
+    assert cosmo_data._sigma_interp is None
+    sig = cosmo_data.sigma_at_logmass(np.array([8.0, 12.0]))
+    assert np.all(np.isfinite(sig)) and sig[0] > sig[1]
+    assert cosmo_data._logmass[0] == pytest.approx(2.0)  # default range, not widened or narrowed
+    assert np.isfinite(cosmo_data.dlogsigma_at_logmass(12.0))
+    assert np.isfinite(cosmo_data.logmass_at_sigma(float(sig[1])))
+
+
+def test_lazy_sigma_table_equals_explicit_default_table(cosmo_data, synthetic_pk_data):
+    from conftest import PLANCK_LIKE
+
+    from foraois import CosmoData
+
+    explicit = CosmoData(PLANCK_LIKE, redshift=[0.0])
+    explicit.prepare_sigma_grid(synthetic_pk_data)
+    _with_pk(cosmo_data, synthetic_pk_data)
+    assert np.array_equal(cosmo_data._sigma, explicit._sigma)
+    assert np.array_equal(cosmo_data._dlogsigma_dlogmass, explicit._dlogsigma_dlogmass)
+    lm = np.linspace(3, 15, 25)
+    assert np.array_equal(cosmo_data.sigma_at_logmass(lm), explicit.sigma_at_logmass(lm))
+
+
+def test_raw_table_arrays_never_read_as_unbuilt(cosmo_data, synthetic_pk_data):
+    _with_pk(cosmo_data, synthetic_pk_data)
+    assert cosmo_data._logmass is not None and cosmo_data._sigma is not None
+    assert cosmo_data._dlogsigma_dlogmass is not None
+
+
+def test_custom_sigma_range_survives_later_lookups_and_tree_construction(cosmo_data, synthetic_pk_data):
+    from foraois import PCHMergerTree
+
+    _with_pk(cosmo_data, synthetic_pk_data)
+    cosmo_data.prepare_sigma_grid(synthetic_pk_data, logmass_min=8.0, logmass_max=15.0, dlogmass=0.1)
+    cosmo_data.sigma_at_logmass(10.0)
+    assert cosmo_data._logmass[0] == pytest.approx(8.0)
+    tree = PCHMergerTree(cosmo_data, cosmo_data.run_params)  # reads the table, must not silently rebuild it
+    assert cosmo_data._logmass[0] == pytest.approx(8.0)
+    assert tree.logmass_grid is cosmo_data._logmass
+
+
+def test_prepare_sigma_grid_rebuilds_on_request(cosmo_data, synthetic_pk_data):
+    _with_pk(cosmo_data, synthetic_pk_data)
+    cosmo_data.sigma_at_logmass(10.0)
+    cosmo_data.prepare_sigma_grid(logmass_min=6.0, logmass_max=15.0, dlogmass=0.5)  # pk_data defaults to own P(k)
+    assert cosmo_data._logmass[0] == pytest.approx(6.0)

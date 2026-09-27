@@ -1,6 +1,7 @@
 import numpy as np
 from scipy import integrate
 
+from foraois.collapse import require_flat_barrier
 from foraois.cosmo_utils import ensure_delta_col_covers
 
 try:
@@ -1092,23 +1093,23 @@ class PCHMergerTree:
         Parameters
         ----------
         cosmo_data : foraois.cosmo_utils.CosmoData
-            Builds the sigma(M) grid as a side effect of construction
-            (calls ``cosmo_data._prepare_sigma_grid()``) -- other code
-            that needs that grid (e.g. ``MassFunctions``) should be
-            constructed after this, not before.
+            Owns the sigma(M) table (built on first use, or by
+            ``cosmo_data.prepare_sigma_grid(...)`` if a non-default mass
+            range or resolution is wanted); this class only reads it.
         params : dict
             Currently unused beyond being stored as ``self.params`` --
             PCH08's own rate parameters (G0, gamma1, gamma2) are fixed
             class attributes, not read from ``params``.
         """
+        # PCH08's rate is derived for a barrier that depends only on z; it reads delta_col(z) directly, so a
+        # scale-dependent barrier request must fail here rather than be silently replaced by the fixed one.
+        require_flat_barrier(cosmo_data, "PCHMergerTree")
         self.cosmo_data = cosmo_data
         self.params = params
         self.pk_data = cosmo_data.get_power_spectrum()
 
-        # Build sigma(M) table (calls _prepare_sigma_grid once)
-        self.cosmo_data._prepare_sigma_grid(self.pk_data)
-
-        # Convenience references to the raw grids (backward-compatible)
+        # Convenience references to the raw grids (backward-compatible). Reading them builds cosmo_data's default
+        # sigma(M) table if none exists yet.
         self.logmass_grid = self.cosmo_data._logmass
         self.sigma_grid = self.cosmo_data._sigma
         self.dlogsigma_grid = self.cosmo_data._dlogsigma_dlogmass
