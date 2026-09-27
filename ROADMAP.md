@@ -30,8 +30,9 @@ Known gaps and open questions, in no particular order.
   produces best-fit parameters for a new dark matter model.
 
 - **Secondary progenitor branches on constrained trees.**
-  `ZhangHuiMergerTree` has `build_full_tree` for growing every progenitor of
-  an *unconstrained* tree (not just the main branch); the constrained
+  `PCHMergerTree` has `build_full_tree` for growing every progenitor of a
+  tree (not just the main branch); `ZhangHuiMergerTree` has no equivalent,
+  and neither does the constrained
   backend (`zhang_hui_constrained_trees.py`) doesn't yet have an equivalent
   -- it only tracks the main (running-maximum) branch.
 

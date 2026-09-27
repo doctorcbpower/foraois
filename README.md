@@ -101,7 +101,7 @@ See [notebooks/foraois_demo.ipynb](notebooks/foraois_demo.ipynb) for a full inte
 ## Documentation
 
 - [docs/MODELS.md](docs/MODELS.md) -- the governing equations, config reference (cosmology, dark matter models, window functions), and full CLI reference (`--algorithm`/`--backend` support matrix).
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) -- module-by-module package structure.
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) -- module-by-module package structure, and a pipeline map from configuration to trees.
 - [docs/TESTING.md](docs/TESTING.md) -- what the test suite covers and how to run it.
 - [docs/PAPER_FIGURES.md](docs/PAPER_FIGURES.md) -- which script reproduces which figure in the software-release paper, and the exact command used for each.
 - [docs/PCH08_HIGH_Z_DIAGNOSTIC.md](docs/PCH08_HIGH_Z_DIAGNOSTIC.md) -- open question: PCH08 main-progenitor histories at small `M_res / M0` differ from Zhang-Hui; read before using PCH08 at `M_res / M0` below ~1e-2.

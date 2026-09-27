@@ -5,7 +5,7 @@ pip install pytest
 pytest tests/
 ```
 
-214 tests as of this writing, all using a synthetic power-law `P(k)` by default (no CLASS/CAMB installation required to run the suite), organized roughly as:
+300 tests as of this writing, all using a synthetic power-law `P(k)` by default (no CLASS/CAMB installation required to run the suite), organized roughly as:
 
 **PCH08 backend.** `test_pch_trees.py` covers all four `PCHMergerTree` tree-building methods (shape/bounds, mass monotonicity, NumPy-backend seed reproducibility, NumPy/Numba statistical consistency, `build_full_tree`'s branching structure, and a regression test disclosing that `build_forest_numba` is *not* seed-reproducible -- see [MODELS.md](MODELS.md)); `test_pch_validation.py` is the branching-rate validation battery (the `J(u)` lookup table, step-size diagnostics, Monte-Carlo-vs-quadrature sampling-consistency checks).
 
