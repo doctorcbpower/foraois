@@ -3,12 +3,16 @@ Exact first-crossing distribution for excursion-set random walks with an
 arbitrary moving barrier B(S) (Zhang & Hui 2006, "On Random Walks with a
 General Moving Barrier", arXiv:astro-ph/0508384).
 
-This only applies to a *Markovian* walk -- i.e. uncorrelated increments in
-S, the mass variance -- which requires a sharp-k window function (see
-utils/window_function.py's sharp_k_window and its docstring): a top-hat
-window gives correlated steps, for which this integral equation does not
-apply (that needs the harder machinery of e.g. Musso & Sheth 2013,
-arXiv:1303.0337)
+This solves the *Markov* (Brownian) first-crossing problem, i.e. a walk with
+uncorrelated increments in S, the mass variance. The solution is exact for
+such a walk. The sharp-k excursion-set construction (see
+utils/window_function.py's sharp_k_window and its docstring) is the standard
+one that gives Markov walks. The solver itself takes only a barrier B(S) and
+knows nothing about the window function, so with any other S(M) -- including
+the default real-space top-hat, whose walks are correlated -- it is the
+Markov approximation applied to that S(M), not an exact treatment of the
+correlated-walk problem (which needs the harder machinery of e.g. Musso &
+Sheth 2013, arXiv:1303.0337). No non-Markovian correction is implemented
 
 Zhang & Hui show f(S), the probability density of first crossing the
 barrier between S and S+dS, satisfies the Volterra integral equation

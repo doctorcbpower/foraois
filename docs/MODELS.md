@@ -158,7 +158,7 @@ Per step: draw `r1`; no split if `r1 > Nupper`, mass becomes `M0*(1-F)`. Otherwi
 
 ## First-crossing distributions ([`first_crossing.py`](../src/foraois/first_crossing.py))
 
-Implements the Zhang & Hui (2006) first-crossing solution (a numerical solution of their Volterra equation; closed form for a constant barrier) for a Markovian excursion-set walk (valid for a **sharp-k window** only) with an arbitrary moving barrier `B(S)` -- not wired into `PCHMergerTree` (its Appendix A rate has no defined meaning for a non-fitted barrier), but is the basis of `zhang_hui_trees.py`, below.
+Implements the Zhang & Hui (2006) first-crossing solution (a numerical solution of their Volterra equation; closed form for a constant barrier) for a Markovian excursion-set walk with an arbitrary moving barrier `B(S)`. The solution is exact for a Markov walk, which the sharp-k excursion-set construction provides. With another window (including the default real-space top-hat, whose walks are correlated) the same solver is the Markov approximation applied to the supplied `S(M)`, not an exact treatment of the corresponding correlated-walk problem, and no non-Markovian correction is implemented -- not wired into `PCHMergerTree` (its Appendix A rate has no defined meaning for a non-fitted barrier), but is the basis of `zhang_hui_trees.py`, below.
 
 ```
 P0(delta,S) = exp(-delta^2/2S) / sqrt(2*pi*S)

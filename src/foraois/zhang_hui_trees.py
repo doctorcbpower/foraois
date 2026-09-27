@@ -1,6 +1,9 @@
 """
-Zhang & Hui (2006)-based progenitor-mass sampling: the exact,
-barrier-agnostic replacement for PCH08's fitted branching rate.
+Zhang & Hui (2006)-based progenitor-mass sampling: a barrier-agnostic replacement for PCH08's
+fitted branching rate, built on the Markov first-crossing distribution.
+That distribution is exact for a Markov walk; with a non-sharp-k S(M), such as
+the default real-space top-hat, it is the Markov approximation applied to that
+S(M) (see `first_crossing.py`).
 
 Where this module sits (general mathematics -> ZH step -> tree):
 
@@ -21,7 +24,7 @@ Where this module sits (general mathematics -> ZH step -> tree):
 `draw_progenitor_mass_zh` is the single-progenitor analog of
 `pch_trees.PCHMergerTree.draw_progenitor_masses`: given a halo of mass
 `M0` at `z0`, and a target redshift `z1`, it draws the progenitor(s) at
-`z1` using the *exact* first-crossing distribution (`first_crossing.py`'s
+`z1` using the Markov first-crossing distribution (`first_crossing.py`'s
 `solve_first_crossing`, evaluated against a barrier from
 `foraois.collapse.delta_c`) instead of PCH08's fitted rate.
 
@@ -47,7 +50,7 @@ The unresolved-accretion mass fraction (PCH08's `F`) is not free from
 `first_crossing.py`'s existing machinery -- it is computed here as its
 own integral of `f(S)` over the sub-`M_res` tail (`S > S_res`), mirroring
 `pch_trees._unresolved_accretion_fraction`'s role but evaluated against
-the exact rate. The resolved-crossing probability and mass draw both
+the Markov first-crossing rate. The resolved-crossing probability and mass draw both
 come from the same `f(S)` solve, so this needs exactly one
 `solve_first_crossing` call per step, not two.
 
