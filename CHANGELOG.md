@@ -2,9 +2,9 @@
 
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); this package predates a formal release process, so entries start at the version this file was introduced.
 
-## Unreleased (branch `general_barrier_tree`)
+## v0.1.2 (unreleased)
 
-Collapse-barrier selection separated from the dark-matter model; an illustrative scale-dependent barrier added. No version bump.
+Collapse-barrier selection separated from the dark-matter model; an illustrative scale-dependent barrier added, alongside the numerical-validity fix below.
 
 ### Added
 
@@ -21,11 +21,7 @@ Collapse-barrier selection separated from the dark-matter model; an illustrative
 - `CosmoData.from_params` accepts `barrier` and `barrier_parameter`.
 - **Linear barrier below the `sigma(M)` table.** `delta_c` evaluates `sigma^2` at the table floor (100 Msun/h) for smaller masses. Found in an end-to-end run: with the default `S_max_factor = 8` the first-crossing grid can extend past the variances the table represents; the mass map then underflowed, `delta_c` was `inf`, and `first_crossing_step` returned NaN/negative values. The fixed barrier is unaffected (it ignores mass).
 
-## v0.1.2 (unreleased)
-
-Numerical-validity fix and audit (2026-09), no algorithmic changes.
-
-### Fixed
+### Fixed (numerical-validity audit, 2026-09, no algorithmic changes)
 
 - **Low-mass `sigma(M)`/`alpha(M)` table clamp (P1).** The compiled (Numba) tree kernels
   (`PCHMergerTree.build_forest_numba`, `grow_full_population_numba_adaptive`,
