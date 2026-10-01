@@ -74,7 +74,7 @@ import numpy as np
 from scipy.integrate import cumulative_trapezoid
 from scipy.special import erfc, erfcinv
 
-from foraois.collapse import delta_c, require_flat_barrier
+from foraois.collapse import barrier_is_flat, delta_c, require_flat_barrier
 from foraois.cosmo_utils import ensure_delta_col_covers
 from foraois.first_crossing import solve_first_crossing
 
@@ -201,7 +201,11 @@ def first_crossing_step(
         S_res     : variance at M_res (relative to M0's own S0)
         p_res     : P(resolved first crossing, i.e. S <= S_res)
         F_zh      : unresolved-accretion mass fraction (S > S_res tail),
-                    clipped to [0, 1]
+                    clipped to [0, 1]. For a flat barrier this is the full
+                    tail (the grid integral out to S_max plus the closed-form
+                    tail beyond it); for a scale-dependent barrier it is the
+                    tail integrated out to S_max only (see the comment at
+                    its definition).
         S_lower   : variance at `M_avail - M_res` (M_avail = M0*(1-F_zh)),
                     the *upper* mass bound on a resolved split -- see
                     `p_split` below.
@@ -286,7 +290,18 @@ def first_crossing_step(
     F_cum = cumulative_trapezoid(f, S_grid, initial=0.0)
 
     p_res = float(np.interp(S_res, S_grid, F_cum))
-    F_zh = float(np.clip(F_cum[-1] - p_res, 0.0, 1.0))
+    if barrier_is_flat(cosmo_data):
+        # A flat barrier has unit total crossing probability, so the unresolved fraction is the full tail beyond
+        # S_res, as in the closed-form flat-barrier paths. The grid only reaches S_max, so F_cum[-1] - p_res alone
+        # would hand the tail beyond S_max to the resolved progenitor; add that tail from the closed-form CDF. The
+        # numerical difference is kept (rather than 1 - p_res) because p_res and F_cum[-1] share the same grid error
+        # near S = 0, which cancels in the difference but not in p_res alone when dS exceeds B(0)^2.
+        F_zh = float(np.clip(F_cum[-1] - p_res + (1.0 - _flat_barrier_cdf(S_max, float(B(0.0)))), 0.0, 1.0))
+    else:
+        # A scale-dependent barrier need not be crossed with unit probability, so adding a tail beyond S_max (or
+        # using 1 - p_res) would also assign the non-crossing probability to the unresolved population, which is a
+        # change of prescription, not a numerical correction. The tail is kept as the integral out to S_max.
+        F_zh = float(np.clip(F_cum[-1] - p_res, 0.0, 1.0))
 
     # Restrict the resolved-split range so the complement is guaranteed
     # resolved too (see the docstring's p_split entry) -- mirrors N23's
@@ -370,9 +385,12 @@ def draw_progenitor_mass_zh(
     list of float
         0, 1, or 2 progenitor masses (Msun/h), each >= M_res, satisfying
         `M0 = sum(progenitors) + F_zh*M0` where F_zh is the unresolved-
-        accretion fraction computed internally (mirrors
-        `pch_trees.draw_progenitor_masses`'s [M1, M2] / [M_continuing] /
-        [] return convention exactly). Both progenitors are guaranteed
+        accretion fraction computed internally (same 0/1/2-progenitor
+        count convention as `pch_trees.draw_progenitor_masses`). When two
+        are returned the order is [continuing, drawn]: they are the
+        complementary fragments of the resolved mass, the drawn mass can
+        exceed the continuing mass, and callers should not infer an ordering
+        by mass from the position in the list. Both progenitors are guaranteed
         >= M_res whenever two are returned -- the resolved-split draw is
         restricted to `first_crossing_step`'s `p_split`/`S_lower` range,
         which bounds the complement the same way the drawn progenitor
@@ -395,6 +413,8 @@ def draw_progenitor_mass_zh(
 
     v = rng.uniform(step["p_res"] - p_split, step["p_res"])
     S_star = float(np.interp(v, step["F_cum"], step["S_grid"]))
+    # M2 is the drawn progenitor mass; it can exceed half of M_avail, and the other fragment is the complementary
+    # mass M_avail - M2 (no ordering of the two is assumed).
     M2 = float(_mass_at_S(np.array([S_star]), step["sigma0_sq"], cosmo_data)[0])
 
     M_continuing -= M2
@@ -480,6 +500,7 @@ def draw_progenitor_mass_zh_flat(M0, z0, z1, M_res, cosmo_data, model="cdm", rng
 
     v = rng.uniform(p_lower, p_res)
     S_star = float(_flat_barrier_sample(v, d_omega))
+    # M2 is the drawn progenitor mass (it can exceed M_continuing / 2); M1 is the complementary mass.
     M2 = float(_mass_at_S(np.array([S_star]), sigma0_sq, cosmo_data)[0])
     M1 = M_continuing - M2
 

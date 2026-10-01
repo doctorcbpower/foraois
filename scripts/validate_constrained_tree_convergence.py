@@ -1,34 +1,28 @@
 #!/usr/bin/env python3
 """
-Full-tree-level validation of build_constrained_tree, analogous to N23's
-own Appendix B convergence tests (their Fig. B1: constrained solutions
-converge to the unconstrained distribution for non-extreme constraint
-parameters).
+End-to-end functional check of build_constrained_tree.
 
-Rather than the literal M1 -> 0 (S1 -> infinity) limit N23 use -- not
-practical here, since M1 can't meaningfully go below M_res for a real
-tree-building constraint -- this checks the same underlying property in
-the way that's actually usable: does a "typical" M1 (close to what an
-unconstrained tree naturally reaches at z1 anyway) leave the branch's
-*earlier* growth history statistically indistinguishable from
-unconstrained trees at the same earlier redshift, while an "extreme" M1
-(a genuine rare-outlier constraint) visibly shifts growth earlier --
-confirming both that a weak constraint doesn't spuriously bias the tree,
-and that the constraint mechanism has a real, correctly-directed effect
-when it's supposed to (matching N23's own Fig. 6 finding: larger M1
-shifts growth histories systematically earlier).
+An unconstrained reference ensemble is generated with ZhangHuiMergerTree.build_tree; the median and the 99th
+percentile of its main-progenitor masses at z1 are taken as two constraint masses M1 (the "median-selected" and
+"p99-selected" constraints). Constrained histories are then generated for each M1, and the script reports that they
+reach M1 at z1 and their mean mass at an earlier redshift (default z=0.5) relative to the unconstrained mean.
+
+This is a functional test of the constrained sampler, not a statistical statement about halo assembly. With the
+default configuration (dz=0.2, n_grid=60) the unconstrained reference is not converged: the timestep does not
+satisfy the single-split criterion, and the variance grid is too coarse to resolve the split probability. The
+selected M1 values and the ratios to the unconstrained mean therefore should not be read as representative of the
+halo population. Larger M1 necessarily gives more mass at earlier times; the ordering is not an independent
+prediction.
 
 z_max = z1 throughout (no unconstrained continuation) -- this script
 validates the constrained portion specifically; the continuation reuses
 ZhangHuiMergerTree.build_tree unchanged.
 
-With --output-figure, also produces a typical-vs-extreme growth-history
-figure, drawing its representative individual histories from the same
-typical/extreme M1 values reported in the printed statistics.
+With --output-figure, also produces a growth-history figure of the unconstrained and the two constrained ensembles,
+drawing its individual histories from the same M1 values reported in the printed statistics.
 
-`first_crossing_step`'s own grid-resolution warning is expected at
-moderate --n-grid; it is not silenced here so it stays visible when this
-script is run directly.
+`first_crossing_step`'s own grid-resolution warning is expected with the default --n-grid; it is not silenced here
+so it stays visible when this script is run directly.
 
 Usage
 -----
@@ -45,6 +39,10 @@ from foraois.pch_trees import PCHMergerTree
 from foraois.utils import io as foraois_io
 from foraois.zhang_hui_constrained_trees import build_constrained_tree
 from foraois.zhang_hui_trees import ZhangHuiMergerTree
+
+
+# Display names for the saved constraint keys (the keys themselves are kept so that older .pkl files still replot).
+DISPLAY_LABELS = {"typical (median)": "median-selected", "extreme (p99)": "p99-selected"}
 
 
 def mass_at_redshift(tree, M0, z_target):
@@ -74,7 +72,7 @@ def run_validation(
     dS=0.05,
     seed=42,
 ):
-    """Sample unconstrained trees, derive typical/extreme M1 targets, and validate constrained trees against them."""
+    """Sample unconstrained trees, select median and p99 M1 targets, and generate constrained trees for each."""
     run_params = foraois_io.get_params(config)
     cosmo_data = CosmoData(run_params, redshift=[z0])
     PCHMergerTree(cosmo_data, run_params)  # side effect: populates the sigma(M) grid
@@ -142,7 +140,7 @@ def run_validation(
 
 
 def build_figure(results, n_show=12, file_name="constrained_vs_unconstrained"):
-    """Plot a subsample of unconstrained, typical-constrained, and extreme-constrained histories (single column)."""
+    """Plot a subsample of unconstrained, median-selected and p99-selected constrained histories (single column)."""
     import matplotlib.pyplot as plt
 
     from foraois.utils import paper_style as ps
@@ -157,7 +155,7 @@ def build_figure(results, n_show=12, file_name="constrained_vs_unconstrained"):
     for label, block in results["constrained"].items():
         for zs, ms in block["histories"][:n_show]:
             ax.plot(zs, ms, color=colors[label], alpha=0.6, lw=0.9)
-        ax.plot([], [], color=colors[label], label=rf"constrained, {label}: $M_1={ps.sci(block['M1'])}$")
+        ax.plot([], [], color=colors[label], label=rf"{DISPLAY_LABELS.get(label, label)}: $M_1={ps.sci(block['M1'])}$")
         ax.scatter([results["z1"]], [block["M1"]], color=colors[label], zorder=5, marker="*", s=30, edgecolor="k", linewidth=0.5)
 
     ax.set_yscale("log")
@@ -195,7 +193,7 @@ def main():
     parser.add_argument(
         "--output-figure",
         default=None,
-        help="base name (no extension) for the typical-vs-extreme growth-history "
+        help="base name (no extension) for the growth-history "
         "figure; if omitted, only the printed statistics are produced",
     )
     parser.add_argument(
@@ -235,7 +233,7 @@ def main():
 
     for label, block in results["constrained"].items():
         print(
-            f"\nM1={label}={block['M1']:.3e}: constrained mass at z={results['z_earlier']}: "
+            f"\nM1={DISPLAY_LABELS.get(label, label)}={block['M1']:.3e}: constrained mass at z={results['z_earlier']}: "
             f"mean={block['earlier_mean']:.3e}, median={block['earlier_median']:.3e} "
             f"(ratio to unconstrained mean: {block['ratio_to_unconstrained_mean']:.3f})"
         )

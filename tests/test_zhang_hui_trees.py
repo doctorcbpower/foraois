@@ -11,6 +11,7 @@ import pytest
 from foraois.first_crossing import flat_barrier_first_crossing
 from foraois.zhang_hui_trees import (
     ZhangHuiMergerTree,
+    _flat_barrier_cdf,
     draw_progenitor_mass_zh,
     first_crossing_step,
 )
@@ -62,6 +63,45 @@ def test_p_res_and_F_zh_are_valid_probabilities(zh_tree_generator):
     assert step["p_res"] + step["F_zh"] <= 1.0 + 1e-8
 
 
+def test_flat_barrier_unresolved_fraction_is_the_full_tail(zh_tree_generator):
+    # A flat barrier has unit total crossing probability, so the unresolved fraction is the whole tail beyond S_res,
+    # not the tail truncated at S_max = S_max_factor * S_res (which would hand the rest to the resolved progenitor).
+    cosmo_data = zh_tree_generator.cosmo_data
+    M0, z0, z1, M_res = 1e12, 0.0, 0.5, 1e10
+    d_omega = float(cosmo_data.delta_col_at_z(z1) - cosmo_data.delta_col_at_z(z0))
+    step = first_crossing_step(M0, z0, z1, M_res, cosmo_data, model="cdm", N_grid=400)
+
+    S_max = step["S_grid"][-1]
+    truncated = step["F_cum"][-1] - step["p_res"]
+    tail_beyond_S_max = 1.0 - float(_flat_barrier_cdf(S_max, d_omega))
+    assert step["F_zh"] == pytest.approx(truncated + tail_beyond_S_max, abs=1e-12)
+    assert truncated / step["F_zh"] < 0.8  # at S_max_factor = 8 the truncated tail is only ~0.65 of the full one
+
+
+# Absolute error of F_zh against the closed-form flat-barrier tail, measured for this step (M0 = 1e12, M_res = 1e10,
+# z0 -> z1 = 0 -> 0.5, N_grid = 200 / 400 / 800: 9.7e-6 / 2.4e-6 / 6.0e-7); the tolerances leave ~3x margin.
+@pytest.mark.parametrize("N_grid, tol", [(200, 3e-5), (400, 8e-6), (800, 2e-6)])
+def test_flat_barrier_unresolved_fraction_matches_the_closed_form(zh_tree_generator, N_grid, tol):
+    cosmo_data = zh_tree_generator.cosmo_data
+    M0, z0, z1, M_res = 1e12, 0.0, 0.5, 1e10
+    d_omega = float(cosmo_data.delta_col_at_z(z1) - cosmo_data.delta_col_at_z(z0))
+    step = first_crossing_step(M0, z0, z1, M_res, cosmo_data, model="cdm", N_grid=N_grid)
+
+    F_exact = 1.0 - float(_flat_barrier_cdf(step["S_res"], d_omega))
+    assert step["F_zh"] == pytest.approx(F_exact, abs=tol)
+
+
+def test_linear_barrier_unresolved_fraction_keeps_the_truncated_tail(zh_tree_generator, set_barrier):
+    # For a scale-dependent barrier the tail is still integrated only out to S_max: 1 - p_res would also count the
+    # probability of never crossing as unresolved, which is a different prescription.
+    cosmo_data = zh_tree_generator.cosmo_data
+    set_barrier(cosmo_data, "linear", beta=0.15)
+    step = first_crossing_step(LB_M0, 0.0, 0.5, LB_M_RES, cosmo_data, N_grid=100, S_max_factor=2.0)
+    expected = float(np.clip(step["F_cum"][-1] - step["p_res"], 0.0, 1.0))
+    assert step["F_zh"] == expected
+    assert step["F_zh"] < 1.0 - step["p_res"] - 1e-6
+
+
 def test_raises_when_M_res_not_below_M0(zh_tree_generator):
     cosmo_data = zh_tree_generator.cosmo_data
     with pytest.raises(ValueError):
@@ -101,6 +141,30 @@ def test_progenitor_masses_are_resolved_and_bounded(zh_tree_generator):
     # draw got hit at least once over the trials, not just the "nothing
     # resolved this step" branch every time.
     assert n_resolved_splits > 0
+
+
+def test_drawn_progenitor_may_exceed_half_the_available_mass(zh_tree_generator):
+    # The drawn progenitor mass M2 ranges over [M_res, M_avail - M_res], so it can be the larger fragment. The
+    # returned order is [continuing, drawn]; it is not an ordering by mass, and the drawn mass may exceed the other.
+    cosmo_data = zh_tree_generator.cosmo_data
+    M0, z0, z1, M_res, N_grid = 1e12, 0.0, 0.5, 1e10, 60
+    step = first_crossing_step(M0, z0, z1, M_res, cosmo_data, model="cdm", N_grid=N_grid)
+    M_avail = M0 * (1.0 - step["F_zh"])
+
+    rng = np.random.default_rng(5)
+    n_drawn_larger = 0
+    for _ in range(80):
+        progenitors = draw_progenitor_mass_zh(M0, z0, z1, M_res, cosmo_data, model="cdm", rng=rng, N_grid=N_grid)
+        if len(progenitors) != 2:
+            continue
+        complement, drawn = progenitors
+        assert min(progenitors) >= M_res
+        assert M_res <= drawn <= M_avail - M_res
+        assert complement == pytest.approx(M_avail - drawn, rel=1e-12)
+        assert sum(progenitors) + step["F_zh"] * M0 == pytest.approx(M0, rel=1e-12)
+        n_drawn_larger += drawn > 0.5 * M_avail
+
+    assert n_drawn_larger > 0
 
 
 def test_resolved_split_never_leaves_a_sub_resolution_complement(zh_tree_generator):
