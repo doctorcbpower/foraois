@@ -2,7 +2,7 @@
 
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); this package predates a formal release process, so entries start at the version this file was introduced.
 
-## v0.1.2 (unreleased)
+## v0.1.2
 
 Collapse-barrier selection separated from the dark-matter model; an illustrative scale-dependent barrier added, alongside the numerical-validity fix below.
 
@@ -20,6 +20,11 @@ Collapse-barrier selection separated from the dark-matter model; an illustrative
 - **DM-specific checks moved to `CosmoData._dm_transfer_function`:** the FDM placeholder warning (now issued once per power-spectrum computation, not on every barrier evaluation) and the SIDM `NotImplementedError` (now raised for `dm_model: sidm`). Passing `model="sidm"` or `model="fdm"` to a tree function no longer warns or raises.
 - `CosmoData.from_params` accepts `barrier` and `barrier_parameter`.
 - **Linear barrier below the `sigma(M)` table.** `delta_c` evaluates `sigma^2` at the table floor (100 Msun/h) for smaller masses. Found in an end-to-end run: with the default `S_max_factor = 8` the first-crossing grid can extend past the variances the table represents; the mass map then underflowed, `delta_c` was `inf`, and `first_crossing_step` returned NaN/negative values. The fixed barrier is unaffected (it ignores mass).
+
+### Fixed (Zhang-Hui unresolved-tail correction)
+
+- `first_crossing_step`'s unresolved mass fraction for a flat barrier now includes the full tail beyond the variance grid's `S_max`. Previously only the tail out to `S_max` was counted, leaving roughly 35 per cent of the true unresolved fraction (at the default `S_max_factor = 8`) assigned to the resolved/continuing progenitor instead. This affects only the serial `ZhangHuiMergerTree.build_tree` / `draw_progenitor_mass_zh` path; the closed-form flat-barrier paths (`draw_progenitor_mass_zh_flat`, `build_forest_numpy`, `build_forest_numba`) were unaffected, since they derive the continuing mass from `p_res` directly rather than from this fraction. Scale-dependent (`linear`) barriers are unchanged: the tail there is still integrated only out to `S_max`, because a non-flat barrier need not be crossed with unit probability.
+- The companion paper's constrained-tree validation, which builds its unconstrained reference ensemble through this path, has been regenerated; the quoted constraint masses and mean-mass ratios changed accordingly (`scripts/validate_constrained_tree_convergence.py`, `figures/constrained_vs_unconstrained`).
 
 ### Fixed (numerical-validity audit, 2026-09, no algorithmic changes)
 

@@ -29,7 +29,7 @@ keywords:
   - Monte Carlo
 license: MIT
 version: 0.1.2
-date-released: "2026-09-22"
+date-released: "2026-10-02"
 # No preferred-citation yet: that field should point to the paper
 # describing this software itself, not the algorithms it implements --
 # add it once that paper exists. PCH08, N23, and Zhang & Hui (2006) are
