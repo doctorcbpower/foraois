@@ -853,13 +853,19 @@ if _HAVE_NUMBA:
     # "track only the main progenitor" to "track every branch", the same
     # way pch_trees._grow_tree_pch08_adaptive_scalar/
     # _grow_forest_pch08_adaptive_kernel extend PCH08's own build_forest_
-    # numba. Unlike PCH08, no adaptive step-size search is needed here:
-    # Zhang & Hui's rate is an exact, already-bounded probability
-    # (p_split <= 1 by construction, not PCH08's Nupper upper-bound
-    # approximation that needs to be kept small), so every branch simply
-    # walks the same shared, fixed-dz z_steps grid the caller already
-    # uses for _build_forest_flat_barrier_kernel -- no per-branch adaptive
-    # stepping, no _pick_adaptive_step-style search.
+    # numba. Unlike PCH08, there is no per-branch adaptive step-size search
+    # here: every branch walks the same shared, fixed-dz z_steps grid the
+    # caller already uses for _build_forest_flat_barrier_kernel.
+    #
+    # This is a design simplification, not a statement that the step is
+    # automatically adequate. p_split <= 1 only says the split probability is
+    # a valid probability (a CDF difference, so it saturates rather than
+    # exceeding 1 the way PCH08's Nupper envelope can). It does not control
+    # timestep accuracy: at most one resolved split is drawn per step, so the
+    # step must also be small enough that the EPS expected number of resolved
+    # splits E (foraois.diagnostics.expected_eps_splits_per_step) is small --
+    # E <~ 0.1 is the practical criterion used in the paper. The caller is
+    # responsible for choosing dz accordingly.
     #
     # This is the numba counterpart of scripts/paper_figs/_treegrowth.py's
     # grow_full_population_zh_flat (itself the closed-form counterpart of

@@ -54,18 +54,15 @@ def run_comparison(
     construction. At dz=0.2 (this script's old default) Nupper reaches
     3.5 for this (M0, M_res) pair, three-and-a-half times the collapse
     algorithm's own design assumption, not merely "a bit coarse". This
-    silently flipped the sign of the reported comparison: at dz=0.2 the
-    Zhang-Hui backend's mean surviving mass looked ~11% BELOW PCH08's; at
-    dz=0.005 (max Nupper=0.082, safely compliant; see
-    foraois.diagnostics.expected_splits_per_step) it is ~22% ABOVE -- a
-    sign flip, not a refinement. A second, independent bug (a sign error
-    in the Nupper/S_coeff normalization itself, see _branching_rate_terms
-    and this repo's own fix history) was found and corrected after that,
-    via cross-validation against Parkinson's reference FORTRAN
-    implementation; with it fixed, this comparison moves from ~22% to
-    ~11% (still above PCH08, so a magnitude correction rather than a
-    second sign flip), stable from dz=0.01 down to dz=0.002 (12.2%,
-    11.4%, 11.1% respectively) -- i.e. converged, not just "less wrong".
+    made the comparison untrustworthy (the two backends then differ for a
+    reason that has nothing to do with the algorithms). At dz=0.005 (max
+    Nupper=0.082, compliant; see foraois.diagnostics.expected_splits_per_step)
+    the mean surviving final mass of Zhang-Hui is about 19% BELOW PCH08's
+    (-19.00% for the default n_trees=20000, seed=42), and docs/MODELS.md
+    records it as stable at 18-19% for dz from 0.01 to 0.002. The statistic
+    is the mean of the surviving trees' final main-progenitor mass (stats key
+    "mean_mass_discrepancy_pct"), not the median. Its origin is not
+    established; see docs/MODELS.md.
     Do not lower dz further than necessary for Nupper compliance purely
     for its own sake: Zhang-Hui's own first_crossing_step under-resolves
     at very fine dz (see fig1_conditional_mass_function.py's docstring)
